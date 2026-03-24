@@ -4,689 +4,944 @@ import re
 import time
 import threading
 import html
+import sqlite3
 from datetime import datetime, timedelta
+from typing import Any, TypedDict
 from flask import Flask, render_template, jsonify, request, send_from_directory
 
-app = Flask(__name__)
-app.config['TEMPLATES_AUTO_RELOAD'] = True
+# ============================================================================
+# 基础组件模块
+# ============================================================================
 
-# ---------------------- 常量与配置 ----------------------
-class LogColor:
-    """ANSI终端颜色常量"""
-    RESET = "\033[0m"
-    INFO = "\033[34m"
-    SUCCESS = "\033[32m"
-    WARNING = "\033[33m"
-    ERROR = "\033[31m"
-    BOLD = "\033[1m"
+class Logger:
+    """日志管理"""
+
+    class Colors:
+        RESET = "\033[0m"
+        INFO = "\033[34m"
+        SUCCESS = "\033[32m"
+        WARNING = "\033[33m"
+        ERROR = "\033[31m"
+        BOLD = "\033[1m"
+
+    def __init__(self, debug: bool = False):
+        self.current_action = ""
+        if debug:
+            self.debug = self._debug
+        else:
+            self.debug = lambda message: None
+
+    def set_action(self, action):
+        """设置当前执行的动作"""
+        self.current_action = action
+
+    def clear_action(self):
+        """清除当前动作"""
+        self.current_action = ""
+
+    def _format_message(self, level, message):
+        """格式化日志消息"""
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        level_color = getattr(self.Colors, level.upper(), self.Colors.INFO)
+
+        if self.current_action:
+            return f"{level_color}[{timestamp}] [{self.current_action}] {message}{self.Colors.RESET}"
+        return f"{level_color}[{timestamp}] {message}{self.Colors.RESET}"
+
+    def info(self, message):
+        print(self._format_message("INFO", message))
+
+    def success(self, message):
+        print(self._format_message("SUCCESS", message))
+
+    def warning(self, message):
+        print(self._format_message("WARNING", message))
+
+    def error(self, message):
+        print(self._format_message("ERROR", message))
+    
+    def _debug(self, message: str):
+        print(message)
 
 
-# 默认配置
-DEFAULT_CONFIG = {
-    "subject_config": {
-        "1": {"name": "语文", "color": "#E67E22", "short": "语"},
-        "2": {"name": "数学", "color": "#4D7CFF", "short": "数"},
-        "3": {"name": "英语", "color": "#F1C40F", "short": "英"},
-        "7": {"name": "物理", "color": "#54B4FF", "short": "物"},
-        "8": {"name": "化学", "color": "#B74093", "short": "化"},
-        "13": {"name": "通用技术", "color": "#2ECC71", "short": "通"},
-        "15": {"name": "信息技术", "color": "#00BCD4", "short": "信"},
-        "default": {"name": "未知", "color": "#A0A0A0", "short": "未"}
-    },
-    "check_interval": 1200
-}
-
-# 路径常量
-CONFIG_FILE = "/storage/emulated/0/1/program/获取答案/config.json"
-LOG_BASE_DIR = "/storage/emulated/0/XHLocalLog/5210/1364978/"
-FILE_BASE_DIR = "/storage/emulated/0/xuehai/5210/filebases/com.xh.acldstu/1364978/"
-OUTPUT_BASE_DIR = "/storage/emulated/0/1/answers"
-
-# ---------------------- 工具函数 ----------------------
-def get_today_date_str():
-    """获取当前日期字符串(YYYYMMDD)"""
-    return datetime.now().strftime("%Y%m%d")
-
-def get_time_stamp():
-    """获取当前时间戳(HH:MM:SS.fff)，精确到微秒"""
-    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-def sanitize_filename(filename):
-    """清理文件名并添加时间戳避免冲突"""
-    invalid_chars = '/\\:*?"<>|'
-    for char in invalid_chars:
-        filename = filename.replace(char, '_')
-    time_suffix = datetime.now().strftime("%d%H%M%S")
-    return f"{time_suffix}_{filename.strip()}"
-
-def process_html_content(text, answers=None):
-    """处理HTML内容（修复格式、转换数学公式等，并填入答案）"""
-    if not text:
-        return ""
-
-    text = html.unescape(text)
-
-    # 处理数学公式
-    text = re.sub(
-        r'<span\s+class="mathquill-embedded-latex"\s*>(.*?)</span>',
-        r'\(\1\)',
-        text,
-        flags=re.DOTALL
-    )
-
-    # # 处理图片
-    # text = re.sub(
-    #     r'<img[^>]*src="([^"]*)"[^>]*>',
-    #     r'<img src="\1" style="max-width: 100%; height: auto; margin: 10px 0;">',
-    #     text
-    # )
-
-    return text
-
-# ---------------------- 配置管理 ----------------------
 class ConfigManager:
-    def __init__(self):
-        self.config = DEFAULT_CONFIG.copy()
-        self.load_config()
+    """配置管理"""
 
-    def load_config(self):
-        """加载配置文件"""
-        global LOG_BASE_DIR, FILE_BASE_DIR, OUTPUT_BASE_DIR
+    DEFAULT_CONFIG = {
+        "subject_config": {
+            "1": {"name": "语文", "color": "#E67E22", "short": "语"},
+            "2": {"name": "数学", "color": "#4D7CFF", "short": "数"},
+            "3": {"name": "英语", "color": "#F1C40F", "short": "英"},
+            "7": {"name": "物理", "color": "#54B4FF", "short": "物"},
+            "8": {"name": "化学", "color": "#B74093", "short": "化"},
+            "13": {"name": "通用技术", "color": "#2ECC71", "short": "通"},
+            "15": {"name": "信息技术", "color": "#00BCD4", "short": "信"},
+            "default": {"name": "未知", "color": "#A0A0A0", "short": "未"}
+        },
+        "check_interval": 3600
+    }
+
+    def __init__(self, config_path, logger: Logger):
+        self.config_path = config_path
+        self.config = self.DEFAULT_CONFIG.copy()
+        self.logger = logger
+        self.load()
+
+    def load(self):
+        """加载配置"""
+        self.logger.set_action("配置")
 
         try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r', encoding='utf-8') as f:
                     user_config = json.load(f)
-                    # 深度合并配置
-                    self.deep_update(self.config, user_config)
-
-                print(f"{LogColor.SUCCESS}[{get_time_stamp()}] [配置] 已加载配置文件{LogColor.RESET}")
+                    self._deep_update(self.config, user_config)
+                self.logger.success("已加载配置文件")
             else:
-                # 创建默认配置文件
-                self.save_config()
-                print(f"{LogColor.INFO}[{get_time_stamp()}] [配置] 创建默认配置文件{LogColor.RESET}")
+                self.save()
+                self.logger.info("创建默认配置文件")
 
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [配置] 加载失败：{str(e)}{LogColor.RESET}")
+            self.logger.error(f"加载失败：{str(e)}")
+        finally:
+            self.logger.clear_action()
 
-    def save_config(self):
-        """保存配置文件"""
+    def save(self):
+        """保存配置"""
+        self.logger.set_action("配置")
+
         try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, ensure_ascii=False, indent=2)
-            print(f"{LogColor.INFO}[{get_time_stamp()}] [配置] 配置已保存{LogColor.RESET}")
+            self.logger.info("配置已保存")
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [配置] 保存失败：{str(e)}{LogColor.RESET}")
+            self.logger.error(f"保存失败：{str(e)}")
+        finally:
+            self.logger.clear_action()
 
-    def deep_update(self, target, source):
+    def _deep_update(self, target, source):
         """深度更新字典"""
         for key, value in source.items():
             if isinstance(value, dict) and key in target and isinstance(target[key], dict):
-                self.deep_update(target[key], value)
+                self._deep_update(target[key], value)
             else:
                 target[key] = value
 
     def get_subject_info(self, subject_id):
-        """根据学科ID获取学科信息"""
-        return self.config['subject_config'].get(str(subject_id), self.config['subject_config']["default"])
+        """获取学科信息"""
+        return self.config['subject_config'].get(str(subject_id), 
+                                                self.config['subject_config']["default"])
 
     def get_check_interval(self):
         """获取检查间隔"""
-        return self.config.get('check_interval', 1200)
+        return self.config.get('check_interval', 3600)
 
-# ---------------------- 数据存储管理 ----------------------
+
 class DataManager:
-    def __init__(self, base_dir):
+    """数据存储管理"""
+
+    def __init__(self, base_dir, logger: Logger):
         self.base_dir = base_dir
+        self.logger = logger
+        self.last_scan_time_file = os.path.join(base_dir, "last_scan_time.txt")
+        self.loaded_works_infos = {}
+        self.cache_lock = threading.Lock()
 
-    def get_month_dir(self, date_str=None):
-        """获取月份目录路径"""
-        if date_str is None:
-            date_str = datetime.now().strftime("%Y%m")
-        month_dir = os.path.join(self.base_dir, date_str)
-        os.makedirs(month_dir, exist_ok=True)
-        return month_dir
-
-    def get_processed_works_file(self, date_str):
-        """获取已处理作业记录文件路径"""
-        month_dir = self.get_month_dir(date_str)
-        return os.path.join(month_dir, "processed_works.txt")
-
-    def get_works_info_file(self, date_str):
-        """获取作业信息文件路径"""
-        month_dir = self.get_month_dir(date_str)
-        return os.path.join(month_dir, "works_info.json")
-
-    def load_processed_works(self, date_str):
-        """加载已处理的作业记录"""
-        processed_file = self.get_processed_works_file(date_str)
-        processed_works = set()
-
+    def load_last_scan_time(self):
+        """加载上次扫描时间"""
         try:
-            if os.path.exists(processed_file):
-                with open(processed_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        processed_works.add(line.strip())
+            if os.path.exists(self.last_scan_time_file):
+                # 以读模式打开文件读取
+                with open(self.last_scan_time_file, 'r', encoding='utf-8') as f:
+                    return int(f.read().strip())
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [数据] 加载已处理记录失败：{str(e)}{LogColor.RESET}")
+            self.logger.warning(f"加载上次扫描时间失败，使用默认值：{str(e)}")
+        return 1765400000000
 
-        return processed_works
-
-    def save_processed_works(self, date_str, processed_works):
-        """保存已处理的作业记录"""
-        processed_file = self.get_processed_works_file(date_str)
-
+    def save_last_scan_time(self, last_scan_time):
+        """保存上次扫描时间"""
         try:
-            with open(processed_file, 'w', encoding='utf-8') as f:
-                for work in processed_works:
-                    f.write(work + '\n')
+            with open(self.last_scan_time_file, 'w', encoding='utf-8') as f:
+                f.write(str(last_scan_time))
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [数据] 保存已处理记录失败：{str(e)}{LogColor.RESET}")
+            self.logger.error(f"保存上次扫描时间失败：{str(e)}")
 
     def load_works_info(self, date_str):
         """加载作业信息"""
-        works_file = self.get_works_info_file(date_str)
+        with self.cache_lock:
+            if date_str in self.loaded_works_infos:
+                return self.loaded_works_infos[date_str]
+            
+            works_file = self._get_works_info_file_path(date_str)
+            try:
+                if os.path.exists(works_file):
+                    with open(works_file, 'r', encoding='utf-8') as f:
+                        works_info = json.load(f)
+                    self.loaded_works_infos[date_str] = works_info
+                    return works_info
+            except Exception as e:
+                self.logger.error(f"加载作业信息失败：{str(e)}")
+            self.loaded_works_infos[date_str] = {}
+            return {}
+    
+    def save_works_infos(self) -> None:
+        with self.cache_lock:
+            for date_str in self.loaded_works_infos:
+                self._save_works_info(date_str, self.loaded_works_infos[date_str])
+            self.loaded_works_infos.clear()
 
-        try:
-            if os.path.exists(works_file):
-                with open(works_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [数据] 加载作业信息失败：{str(e)}{LogColor.RESET}")
-
-        return {"works": []}
-
-    def save_works_info(self, date_str, works_info):
+    def _save_works_info(self, date_str, works_info):
         """保存作业信息"""
-        works_file = self.get_works_info_file(date_str)
+        works_file = self._get_works_info_file_path(date_str)
 
         try:
             with open(works_file, 'w', encoding='utf-8') as f:
                 json.dump(works_info, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [数据] 保存作业信息失败：{str(e)}{LogColor.RESET}")
-
-    def get_work_details_file(self, date_str, work_id):
-        """获取作业详情文件路径"""
-        month_dir = self.get_month_dir(date_str)
-        return os.path.join(month_dir, f"{work_id}.json")
+            self.logger.error(f"保存作业信息失败：{str(e)}")
 
     def save_work_details(self, date_str, work_id, work_data):
         """保存作业详情"""
-        details_file = self.get_work_details_file(date_str, work_id)
+        details_file = self._get_work_details_file_path(date_str, work_id)
 
         try:
             with open(details_file, 'w', encoding='utf-8') as f:
                 json.dump(work_data, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [数据] 保存作业详情失败：{str(e)}{LogColor.RESET}")
+            self.logger.error(f"保存作业详情失败：{str(e)}")
             return False
 
     def load_work_details(self, date_str, work_id):
         """加载作业详情"""
-        details_file = self.get_work_details_file(date_str, work_id)
+        details_file = self._get_work_details_file_path(date_str, work_id)
 
         try:
             if os.path.exists(details_file):
                 with open(details_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [数据] 加载作业详情失败：{str(e)}{LogColor.RESET}")
-
+            self.logger.error(f"加载作业详情失败：{str(e)}")
         return None
-
-# ---------------------- 全局状态 ----------------------
-config_manager = ConfigManager()
-data_manager = DataManager(OUTPUT_BASE_DIR)
-
-# 扫描状态
-scan_in_progress = False
-last_scan_time = 0
-current_date_str = datetime.now().strftime("%Y%m")
-
-# ---------------------- 作业信息处理 ----------------------
-def extract_work_info():
-    """从日志文件提取作业信息"""
-    try:
-        # 构建日志文件路径
-        today_date = get_today_date_str()
-        log_filename = f"作业列表日志{today_date}().txt"
-        log_file_path = f"{LOG_BASE_DIR.rstrip('/')}/{log_filename}"
-        print(f"{LogColor.INFO}[{get_time_stamp()}] [日志提取] 读取作业日志：{log_file_path}{LogColor.RESET}")
-
-        # 读取日志内容（兼容多种编码）
+    
+    def load_no_content_url_records(self):
+        """加载无内容URL的记录"""
+        records_file = self._get_no_content_url_file_path()
+        records = set()
+        
         try:
-            with open(log_file_path, 'r', encoding='utf-8') as f:
-                log_content = f.read()
-        except UnicodeDecodeError:
-            with open(log_file_path, 'r', encoding='gbk', errors='ignore') as f:
-                log_content = f.read()
+            if os.path.exists(records_file):
+                with open(records_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        work_id = line.strip()
+                        if work_id:
+                            records.add(work_id)
+        except Exception as e:
+            self.logger.error(f"加载无内容URL记录失败：{str(e)}")
+        
+        return records
+    
+    def save_no_content_url_records(self, records):
+        """保存无内容URL的记录"""
+        records_file = self._get_no_content_url_file_path()
+        
+        try:
+            with open(records_file, 'w', encoding='utf-8') as f:
+                for work_id in records:
+                    f.write(f"{work_id}\n")
+        except Exception as e:
+            self.logger.error(f"保存无内容URL记录失败：{str(e)}")
 
-        # 提取JSON数据
-        json_pattern = r'获取首页作业列表：(\{[\s\S]*?\})(?=\n|$)'
-        matched_jsons = re.findall(json_pattern, log_content)
-        if not matched_jsons:
-            print(f"{LogColor.WARNING}[{get_time_stamp()}] [日志提取] 未找到作业列表JSON数据{LogColor.RESET}")
-            return []
+    def _get_month_dir(self, date_str=None):
+        """获取月份目录"""
+        if date_str is None:
+            date_str = datetime.now().strftime("%Y%m")
+        month_dir = os.path.join(self.base_dir, date_str)
+        os.makedirs(month_dir, exist_ok=True)
+        return month_dir
 
-        print(f"{LogColor.INFO}[{get_time_stamp()}] [日志提取] 找到{len(matched_jsons)}条作业JSON数据{LogColor.RESET}")
+    def _get_work_details_file_path(self, date_str, work_id):
+        """获取作业详情文件路径"""
+        month_dir = self._get_month_dir(date_str[:6])
+        return os.path.join(month_dir, f"{work_id}.json")
 
-        # 解析作业信息
-        all_works = []
-        seen_file_paths = set()
-        url_pattern = r'https://[\d\w]*.ztytech.com/CA103001/SingleUpload/(.*)'
+    def _get_works_info_file_path(self, date_str):
+        """获取作业信息文件路径"""
+        month_dir = self._get_month_dir(date_str[:6])
+        return os.path.join(month_dir, "works_info.json")
 
-        for json_str in matched_jsons:
+    def _get_no_content_url_file_path(self):
+        """获取无内容URL的记录文件路径"""
+        return os.path.join(self.base_dir, "no_content_url.txt")
+
+
+# ============================================================================
+# 作业处理模块
+# ============================================================================
+
+class DatabaseExtractor:
+    """数据库提取器"""
+
+    def __init__(self, db_path, file_base_dir, data_manager: DataManager, logger: Logger):
+        self.db_path = db_path
+        self.file_base_dir = file_base_dir
+        self.data_manager = data_manager
+        self.logger = logger
+        self.question_type_mapping = {}
+        self._load_question_types()
+
+    def _load_question_types(self):
+        """从数据库加载题目类型映射"""
+        self.logger.set_action("题目类型")
+        
+        try:
+            if not os.path.exists(self.db_path):
+                self.logger.warning(f"数据库文件不存在：{self.db_path}")
+                return
+
+            conn = sqlite3.connect(f'file:{self.db_path}?mode=ro', uri=True)
             try:
-                work_data = json.loads(json_str)
-                # 合并各类作业列表
-                all_work_entries = (
-                    work_data.get("latestWorkList", []) +
-                    work_data.get("topWorkList", []) +
-                    work_data.get("topExamList", [])
-                )
+                cursor = conn.cursor()
+                
+                # 查询QuestionUserType表
+                cursor.execute("SELECT _id, NAME FROM QuestionUserType")
+                rows = cursor.fetchall()
+                
+                for row_id, name in rows:
+                    self.question_type_mapping[row_id] = name
+                
+                self.logger.info(f"已加载 {len(self.question_type_mapping)} 种题目类型")
+                
+            finally:
+                conn.close()
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"读取题目类型失败：{str(e)}")
+        except Exception as e:
+            self.logger.error(f"加载题目类型映射失败：{str(e)}")
+        finally:
+            self.logger.clear_action()
 
-                for work in all_work_entries:
-                    work_name = work.get("name", f"未知作业_{int(time.time())}")
-                    content_url = work.get("preDownloadUrls", "")
-                    subject_id = work.get("subject", "default")
-                    upto_time = work.get("uptoTime", "")  # 获取截止时间
+    def extract_work_info(self) -> list[dict]:
+        """从数据库提取作业信息"""
+        self.logger.set_action("数据库")
 
-                    if not content_url:
-                        continue
+        try:
+            if not os.path.exists(self.db_path):
+                self.logger.error(f"数据库文件不存在：{self.db_path}")
+                return []
 
-                    # 提取文件路径
-                    match = re.search(url_pattern, content_url)
-                    if match:
-                        file_path = match.group(1).split('?')[0]
-                        if file_path in seen_file_paths:
-                            continue
-                        seen_file_paths.add(file_path)
+            conn = sqlite3.connect(f'file:{self.db_path}?mode=ro', uri=True)
+            no_url_works = self.data_manager.load_no_content_url_records()
+            # 获取上次扫描时间
+            last_scan_timestamp = self.data_manager.load_last_scan_time()
+            latest_scan_timestamp = last_scan_timestamp
+            try:
+                cursor = conn.cursor()
+                all_works = []
+                time_now = int(time.time() * 1000)
 
-                        # 构建作业信息
-                        all_works.append({
-                            'file_path': file_path,
+
+                # 合并查询：查找更新的记录 + 无内容URL的记录
+                if no_url_works:
+                    placeholders = ','.join(['?'] * len(no_url_works))
+                    query = f"""
+                    SELECT WORK_ID, CONTENT_URL, NAME, SUBJECT,
+                        CREATE_TIME, UPTO_TIME, START_TIME, END_TIME, UPDATE_TIME
+                    FROM xh_yzy_student_work_list 
+                    WHERE UPDATE_TIME > ? OR WORK_ID IN ({placeholders})
+                    """
+                    params = (last_scan_timestamp,) + tuple(no_url_works)
+                else:
+                    query = """
+                    SELECT WORK_ID, CONTENT_URL, NAME, SUBJECT,
+                        CREATE_TIME, UPTO_TIME, START_TIME, END_TIME, UPDATE_TIME
+                    FROM xh_yzy_student_work_list 
+                    WHERE UPDATE_TIME > ?
+                    """
+                    params = (last_scan_timestamp,)
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                self.logger.info(f"找到{len(rows)}条作业记录")
+
+                for row in rows:
+                    try:
+                        work_id, content_url, work_name, subject_id, \
+                            create_time, upto_time, start_time, end_time, update_time = row
+                        
+                        if work_id in no_url_works:
+                            if content_url:
+                                no_url_works.remove(work_id)
+                                self.logger.info(f"{work_name} (科目: {subject_id}) 新增URL")
+                            elif time_now > max(upto_time, end_time):
+                                no_url_works.remove(work_id)
+                                self.logger.info(f"移除过期无内容作业: {work_name}")
+                                continue
+                            else:
+                                continue
+
+                        if not content_url:
+                            if time_now > max(upto_time, end_time):
+                                continue
+                            no_url_works.add(work_id)
+                            file_name = 'no_file'
+                            no_url = True
+                        else:
+                            file_name = content_url[-36:-4]
+                            no_url = False
+                        is_exam = upto_time == 0 and start_time != 0 and end_time != 0
+                        work_info = {
+                            'work_id': work_id,
+                            'no_url': no_url,
+                            'file_name': file_name,
+                            'month_str': datetime.fromtimestamp(create_time // 1000).strftime("%Y%m"),
                             'work_name': work_name,
                             'subject_id': subject_id,
-                            'upto_time': upto_time,
-                            'scan_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        })
-                        print(f"{LogColor.INFO}[{get_time_stamp()}] [日志提取] 发现作业 {work_name} (科目: {subject_id}){LogColor.RESET}")
+                            'is_exam': is_exam,
+                            'start_time': start_time if is_exam else create_time,
+                            'upto_time': end_time if is_exam else upto_time
+                        }
+                        all_works.append(work_info)
+                        self.logger.info(f"发现{'无URL' if no_url else ''}{'考试' if is_exam else '作业'} {work_name} (科目: {subject_id})")
+                        self.logger.debug(f'{create_time, upto_time, start_time, end_time, update_time, last_scan_timestamp, latest_scan_timestamp}')
 
-            except json.JSONDecodeError:
-                print(f"{LogColor.ERROR}[{get_time_stamp()}] [日志提取] JSON解析失败{LogColor.RESET}")
-                continue
+                        if update_time > latest_scan_timestamp:
+                            latest_scan_timestamp = update_time
 
-        print(f"{LogColor.SUCCESS}[{get_time_stamp()}] [日志提取] 成功提取{len(all_works)}个作业信息{LogColor.RESET}")
-        return all_works
+                    except Exception as e:
+                        self.logger.error(f"解析作业记录失败：{str(e)}")
+                        continue
 
-    except FileNotFoundError:
-        print(f"{LogColor.WARNING}[{get_time_stamp()}] [日志提取] 日志文件不存在 {log_file_path}{LogColor.RESET}") # pyright: ignore[reportPossiblyUnboundVariable]
-        return []
-    except Exception as e:
-        print(f"{LogColor.ERROR}[{get_time_stamp()}] [日志提取] 失败：{str(e)}{LogColor.RESET}")
-        return []
+                self.logger.success(f"成功提取{len(all_works)}个作业信息")
+                return all_works
+            finally:
+                conn.close()
+                self.data_manager.save_no_content_url_records(no_url_works)
+                self.data_manager.save_last_scan_time(latest_scan_timestamp)
+        except sqlite3.Error as e:
+            self.logger.error(f"SQLite错误：{str(e)}")
+            return []
+        except Exception as e:
+            self.logger.error(f"提取失败：{str(e)}")
+            return []
+        finally:
+            self.logger.clear_action()
 
-def process_work_file(file_path, work_name, subject_id, upto_time, date_str):
-    """处理单个作业文件并提取详细信息"""
-    # 检查文件是否存在
-    input_path = f"{FILE_BASE_DIR}/{date_str}/{file_path}"
-    if not os.path.exists(input_path):
-        print(f"{LogColor.WARNING}[{get_time_stamp()}] [文件处理] 文件不存在：{input_path}{LogColor.RESET}")
-        return None
+    def get_question_type_name(self, type_id):
+        """根据类型ID获取题目类型名称"""
+        return self.question_type_mapping.get(type_id, f"未知类型({type_id})")
 
-    print(f"{LogColor.INFO}[{get_time_stamp()}] [文件处理] 开始处理：{file_path}（{work_name}）{LogColor.RESET}")
 
-    # 读取并解析JSON
-    try:
-        with open(input_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError:
-        print(f"{LogColor.ERROR}[{get_time_stamp()}] [文件处理] 无效JSON：{file_path}{LogColor.RESET}")
-        return None
-    except Exception as e:
-        print(f"{LogColor.ERROR}[{get_time_stamp()}] [文件处理] 读取失败：{str(e)}{LogColor.RESET}")
-        return None
+class WorkFileProcessor:
+    """作业文件处理器"""
 
-    # 提取作业详情
-    work_details = {
-        'work_name': work_name,
-        'subject_id': subject_id,
-        'upto_time': upto_time,
-        'scan_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'file_path': file_path,
-        'questions': []
-    }
+    def __init__(self, file_base_dir, logger: Logger, db_extractor: DatabaseExtractor):
+        self.file_base_dir = file_base_dir
+        self.logger = logger
+        self.db_extractor = db_extractor
 
-    # 组织答案和题目
-    answers_by_question = {}
-    for answer in data.get('questionAnswers', []):
-        qid = answer['questionId']
-        if qid not in answers_by_question:
-            answers_by_question[qid] = []
-        answers_by_question[qid].append(answer)
+    def process(self, work_info: dict[str, Any]):
+        """处理单个作业文件"""
+        self.logger.set_action("文件处理")
 
-    question_map = {q['questionId']: q for q in data.get('questionPoolContentInfos', [])}
-    parent_to_children = {}
-    for question in data.get('questionPoolContentInfos', []):
-        parent_id = question.get('parentQuestionId', '0')
-        if parent_id != "0" and parent_id in question_map:
-            parent_to_children.setdefault(parent_id, []).append(question)
+        # 构建完整文件路径
+        file_path = os.path.join(self.file_base_dir, work_info['month_str'], work_info['file_name']+'.txt')
 
-    top_level_questions = [
-        q for q in data.get('questionPoolContentInfos', [])
-        if q.get('parentQuestionId', '0') == "0" or q.get('parentQuestionId') not in question_map
-    ]
+        if not os.path.exists(file_path):
+            self.logger.warning(f"文件不存在：{file_path}")
+            self.logger.clear_action()
+            return None
 
-    # 构建题目结构
-    qn = 0
-    for question in top_level_questions:
-        qid = question['questionId']
-        qn += 1
-        answers = answers_by_question.get(qid, [])
+        self.logger.info(f"开始处理 {work_info['work_name']}")
 
-        # 处理题目内容
-        stem_content = process_html_content(question.get('stemContent', ''), answers)
-        explain_content = process_html_content(question.get('explainContent', ''))
-        has_children = qid in parent_to_children
+        # 读取并解析JSON
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            self.logger.error(f"无效JSON：{file_path}")
+            self.logger.clear_action()
+            return None
+        except Exception as e:
+            self.logger.error(f"读取失败：{str(e)}")
+            self.logger.clear_action()
+            return None
 
-        question_data = {
-            'question_id': qid,
-            'question_number': qn,
-            'stem_content': stem_content,
-            'explain_content': explain_content,
-            'has_children': has_children,
-            'answers': [],
-            'sub_questions': []
+        # 提取作业详情
+        work_details = self._extract_work_details(data, work_info)
+
+        self.logger.success(f"提取作业详情：{work_info['work_name']}")
+        self.logger.clear_action()
+        return work_details
+
+    def _extract_work_details(self, data, work_info):
+        """从数据中提取作业详情"""
+        work_details = {
+            'work_name': work_info['work_name'],
+            'subject_id': work_info['subject_id'],
+            'upto_time': work_info['upto_time'],
+            'is_exam': work_info['is_exam'],
+            'start_time': work_info['start_time'],
+            'questions': []
         }
 
-        # 添加答案
-        for answer in answers:
-            question_data['answers'].append({
-                'answer_content': process_html_content(answer['answerContent']),
-                'index': answer.get('index', 0)
-            })
+        # 组织答案和题目
+        answers_by_question = {}
+        for answer in data.get('questionAnswers', []):
+            qid = answer['questionId']
+            if qid not in answers_by_question:
+                answers_by_question[qid] = []
+            answers_by_question[qid].append(answer)
 
-        # 处理子题目
-        if has_children:
-            sub_questions = parent_to_children[qid]
-            sub_qn = 1
-            for sub_question in sub_questions:
-                sub_qid = sub_question['questionId']
-                sub_answers = answers_by_question.get(sub_qid, [])
-                sub_stem_content = process_html_content(sub_question.get('stemContent', ''), sub_answers)
-                sub_explain_content = process_html_content(sub_question.get('explainContent', ''))
+        question_map = {q['questionId']: q for q in data.get('questionPoolContentInfos', [])}
+        parent_to_children = {}
 
-                sub_question_data = {
-                    'question_id': sub_qid,
-                    'question_number': f"{qn}.{sub_qn}",
-                    'stem_content': sub_stem_content,
-                    'explain_content': sub_explain_content,
-                    'answers': []
+        for question in data.get('questionPoolContentInfos', []):
+            parent_id = question.get('parentQuestionId', '0')
+            if parent_id != "0" and parent_id in question_map:
+                parent_to_children.setdefault(parent_id, []).append(question)
+
+        top_level_questions = [
+            q for q in data.get('questionPoolContentInfos', [])
+            if q.get('parentQuestionId', '0') == "0" or q.get('parentQuestionId') not in question_map
+        ]
+
+        # 构建题目结构
+        qn = 0
+        for question in top_level_questions:
+            qid = question['questionId']
+            # 获取题目类型
+            question_user_type = question.get('questionUserType', 0)
+            question_type_name = self.db_extractor.get_question_type_name(question_user_type)
+
+            # 特殊处理：如果类型为"未知类型(0)"，作为分割线处理
+            if question_user_type == 0:
+                # 创建分割线题目
+                divider_question = {
+                    'question_id': qid,
+                    'question_type': '分割线',
+                    'stem_content': self._process_html_content(question.get('stemContent', '')),
+                    'explain_content': '',
+                    'has_children': False,
+                    'answers': [],
+                    'sub_questions': []
                 }
+                work_details['questions'].append(divider_question)
+                continue  # 跳过正常的题目处理
 
-                # 添加子题目答案
-                for answer in sub_answers:
-                    sub_question_data['answers'].append({
-                        'answer_content': process_html_content(answer['answerContent']),
-                        'index': answer.get('index', 0)
-                    })
+            qn += 1
+            
+            answers = answers_by_question.get(qid, [])
 
-                question_data['sub_questions'].append(sub_question_data)
-                sub_qn += 1
+            # 处理题目内容
+            stem_content = self._process_html_content(
+                question.get('stemContent', ''))
+            explain_content = self._process_html_content(
+                question.get('explainContent', ''))
+            has_children = qid in parent_to_children
 
-        work_details['questions'].append(question_data)
+            question_data = {
+                'question_id': qid,
+                'question_number': qn,
+                'question_type': question_type_name,
+                'stem_content': stem_content,
+                'explain_content': explain_content,
+                'has_children': has_children,
+                'answers': [],
+                'sub_questions': []
+            }
 
-    print(f"{LogColor.SUCCESS}[{get_time_stamp()}] [处理成功] 提取作业详情：{work_name}{LogColor.RESET}")
-    return work_details
+            # 添加答案
+            for answer in answers:
+                question_data['answers'].append({
+                    'answer_content': self._process_html_content(answer['answerContent']),
+                    'index': answer.get('index', 0)
+                })
 
-# ---------------------- 扫描任务 ----------------------
-def perform_scan():
-    """执行作业扫描与处理"""
-    global scan_in_progress, last_scan_time, current_date_str
+            # 处理子题目
+            if has_children:
+                sub_questions = parent_to_children[qid]
+                sub_qn = 1
+                for sub_question in sub_questions:
+                    sub_qid = sub_question['questionId']
+                    
+                    # 获取子题目类型
+                    sub_question_user_type = sub_question.get('questionUserType', 0)
+                    sub_question_type_name = self.db_extractor.get_question_type_name(sub_question_user_type)
+                    
+                    sub_answers = answers_by_question.get(sub_qid, [])
+                    sub_stem_content = self._process_html_content(
+                        sub_question.get('stemContent', ''))
+                    sub_explain_content = self._process_html_content(
+                        sub_question.get('explainContent', ''))
 
-    if scan_in_progress:
-        return
+                    sub_question_data = {
+                        'question_id': sub_qid,
+                        'question_number': f"{qn}.{sub_qn}",
+                        'question_type': sub_question_type_name,
+                        'stem_content': sub_stem_content,
+                        'explain_content': sub_explain_content,
+                        'answers': []
+                    }
 
-    scan_in_progress = True
-    print(f"{LogColor.INFO}[{get_time_stamp()}] [扫描任务] 开始扫描作业...{LogColor.RESET}")
+                    # 添加子题目答案
+                    for answer in sub_answers:
+                        sub_question_data['answers'].append({
+                            'answer_content': self._process_html_content(answer['answerContent']),
+                            'index': answer.get('index', 0)
+                        })
 
-    try:
-        # 检查是否需要跨月切换目录
-        new_date_str = datetime.now().strftime("%Y%m")
-        if new_date_str != current_date_str:
-            current_date_str = new_date_str
-            print(f"{LogColor.SUCCESS}[{get_time_stamp()}] [跨月更新] 切换年月目录至：{current_date_str}{LogColor.RESET}")
+                    question_data['sub_questions'].append(sub_question_data)
+                    sub_qn += 1
 
-        # 加载已处理记录和作业信息
-        processed_works = data_manager.load_processed_works(current_date_str)
-        works_info = data_manager.load_works_info(current_date_str)
+            work_details['questions'].append(question_data)
 
-        # 提取作业信息
-        works = extract_work_info()
-        processed_count = 0
+        return work_details
 
-        # 处理每个作业
-        for work in works:
-            if work['file_path'] in processed_works:
-                print(f"{LogColor.INFO}[{get_time_stamp()}] [扫描任务] 跳过已处理：{work['file_path']}{LogColor.RESET}")
-                continue
+    def _process_html_content(self, text):
+        """处理HTML内容"""
+        if not text:
+            return ""
 
-            # 处理作业文件
-            work_details = process_work_file(
-                work['file_path'], 
-                work['work_name'],
-                work['subject_id'],
-                work['upto_time'],
-                current_date_str
-            )
+        text = html.unescape(text)
 
-            if work_details:
-                # 生成唯一作业ID
-                work_id = sanitize_filename(work['work_name'])
+        # 处理数学公式
+        text = re.sub(
+            r'<span\s+class="mathquill-embedded-latex"\s*>(.*?)</span>',
+            r'\(\1\)',
+            text,
+            flags=re.DOTALL
+        )
 
-                # 保存作业详情
-                if data_manager.save_work_details(current_date_str, work_id, work_details):
-                    # 更新作业信息
-                    works_info['works'].append({
-                        'work_id': work_id,
+        return text
+
+
+# ============================================================================
+# 扫描服务模块
+# ============================================================================
+
+class Scanner:
+    """扫描服务"""
+
+    def __init__(self, config_manager: ConfigManager, data_manager: DataManager, db_extractor: DatabaseExtractor, work_processor: WorkFileProcessor, logger: Logger):
+        self.config_manager = config_manager
+        self.data_manager = data_manager
+        self.db_extractor = db_extractor
+        self.work_processor = work_processor
+        self.logger = logger
+
+        self.scan_in_progress = False
+        self.last_scan_time = 0
+
+    def perform_scan(self):
+        """执行扫描"""
+        if self.scan_in_progress:
+            self.logger.warning("扫描任务正在进行中，跳过")
+            return
+
+        self.scan_in_progress = True
+        self.logger.set_action("扫描任务")
+        self.logger.info("开始扫描作业...")
+
+        try:
+
+            # 提取作业信息
+            works = self.db_extractor.extract_work_info()
+            processed_count = 0
+
+            # 处理每个作业
+            for work in works:
+                if not work['no_url']:
+                    work_id = work['work_id']
+                    month_str = work['month_str']
+                    # 处理作业文件
+                    work_details = self.work_processor.process(work)
+                    # 保存作业详情
+                    if not self.data_manager.save_work_details(month_str, work_id, work_details):
+                        continue
+                    processed_count += 1
+                # 更新作业信息列表
+                self._update_works_info(work)
+            self.data_manager.save_works_infos()
+
+            if processed_count > 0:
+                self.logger.success(f"成功处理{processed_count}个作业")
+            else:
+                self.logger.info("未发现新作业")
+
+            # 更新最后扫描时间
+            self.last_scan_time = int(time.time())
+
+        except Exception as e:
+            self.logger.error(f"执行失败：{str(e)}")
+        finally:
+            self.scan_in_progress = False
+            self.logger.clear_action()
+
+    def _update_works_info(self, work_info: dict):
+        """更新作业信息列表"""
+        works_infos = self.data_manager.load_works_info(work_info['month_str'])
+
+        # 构建作业信息
+        work_data = {
+            'work_id': work_info['work_id'],
+            'has_content': not work_info['no_url'],
+            'file_name': work_info['file_name'],
+            'work_name': work_info['work_name'],
+            'subject_id': work_info['subject_id'],
+            'upto_time': work_info['upto_time'],
+            'is_exam': work_info['is_exam'],
+            'start_time': work_info['start_time'],
+            'work_date': datetime.fromtimestamp(work_info['start_time'] // 1000).strftime("%Y%m%d")
+        }
+
+        works_infos[work_info['work_id']] = work_data
+
+    def start_scan_loop(self):
+        """启动扫描循环"""
+        self.logger.set_action("扫描循环")
+
+        while True:
+            try:
+                if not self.scan_in_progress:
+                    self.perform_scan()
+
+                # 等待检查间隔
+                time.sleep(self.config_manager.get_check_interval())
+            except Exception as e:
+                self.logger.error(f"错误：{str(e)}")
+                time.sleep(60)
+
+
+# ============================================================================
+# 网络服务模块
+# ============================================================================
+
+class WebService:
+    """网络服务"""
+
+    def __init__(self, scanner: Scanner, config_manager: ConfigManager, data_manager: DataManager):
+        self.scanner = scanner
+        self.config_manager = config_manager
+        self.data_manager = data_manager
+        self.app = Flask(__name__)
+        self.app.config['TEMPLATES_AUTO_RELOAD'] = True
+        self._setup_routes()
+
+    def _setup_routes(self):
+        """设置Flask路由"""
+
+        @self.app.route('/')
+        def main_page():
+            return render_template('main_page.html')
+
+        @self.app.route('/work/<date_str>/<work_id>')
+        def work_page(date_str, work_id):
+            return render_template('work_page.html', date_str=date_str[:6], work_id=work_id)
+
+        @self.app.route('/api/config')
+        def get_config():
+            return jsonify(self.config_manager.config)
+
+        @self.app.route('/api/config/reload', methods=['POST'])
+        def reload_config():
+            self.config_manager.load()
+            return jsonify({'status': 'success', 'message': '配置已重新加载'})
+
+        @self.app.route('/es5/<path:filename>')
+        def serve_es5_files(filename):
+            es5_dir = "/storage/emulated/0/1/answers/es5"
+            try:
+                return send_from_directory(es5_dir, filename)
+            except FileNotFoundError:
+                return "File not found", 404
+
+        @self.app.route('/api/status')
+        def get_status():
+            last_scan_time_str = "从未扫描"
+            if self.scanner.last_scan_time > 0:
+                last_scan_dt = datetime.fromtimestamp(self.scanner.last_scan_time)
+                last_scan_time_str = last_scan_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            # 计算总作业数
+            total_works = 0
+            output_base_dir = self.data_manager.base_dir
+
+            try:
+                if os.path.exists(output_base_dir):
+                    for month_dir in os.listdir(output_base_dir):
+                        if len(month_dir) == 6 and month_dir.isdigit():
+                            works_info = self.data_manager.load_works_info(month_dir)
+                            total_works += len(works_info)
+            except Exception:
+                pass
+
+            status = {
+                'last_scan_time': self.scanner.last_scan_time,
+                'last_scan_time_str': last_scan_time_str,
+                'check_interval': self.config_manager.get_check_interval(),
+                'scan_in_progress': self.scanner.scan_in_progress,
+                'total_works': total_works,
+                'current_date_str': datetime.now().strftime("%Y%m")
+            }
+
+            return jsonify(status)
+
+        @self.app.route('/api/scan', methods=['POST'])
+        def trigger_scan():
+            if self.scanner.scan_in_progress:
+                return jsonify({'status': 'error', 'message': '扫描正在进行中'})
+
+            threading.Thread(target=self.scanner.perform_scan, daemon=True).start()
+            return jsonify({'status': 'success', 'message': '扫描已开始'})
+
+        @self.app.route('/api/works')
+        def get_works():
+            date_param = request.args.get('date', '')
+            if not date_param:
+                return jsonify([])
+
+            search_date = date_param.replace('-', '')
+            works_data = []
+
+            month_str = search_date[:6]
+            works_info = self.data_manager.load_works_info(month_str)
+
+            for work in works_info.values():
+                if work.get('work_date', '').startswith(search_date):
+                    subject_info = self.config_manager.get_subject_info(work['subject_id'])
+
+                    # 兼容旧数据
+                    is_exam = work.get('is_exam', False)
+                    if 'has_content' in work:
+                        has_content = work['has_content']
+                    elif 'is_no_url' in work:
+                        has_content = not work['is_no_url']
+                    else:
+                        has_content = not work.get('work_id', '').startswith('no_url_')
+                    if 'start_time' in work:
+                        start_time = work['start_time']
+                    elif 'scan_time' in work:
+                        # 尝试从scan_time字符串解析时间
+                        scan_time_str = work['scan_time']
+                        scan_dt = datetime.strptime(scan_time_str, "%Y-%m-%d %H:%M:%S")
+                        start_time = int(scan_dt.timestamp() * 1000)
+                    else:
+                        start_time = 0
+                    
+                    # 构建作业数据
+                    work_data = {
+                        'work_id': work['work_id'],
                         'work_name': work['work_name'],
                         'subject_id': work['subject_id'],
-                        'upto_time': work['upto_time'],
-                        'scan_time': work['scan_time'],
-                        'work_date': datetime.now().strftime("%Y%m%d")  # 使用扫描日期作为作业日期
-                    })
+                        'subject_name': subject_info['name'],
+                        'subject_color': subject_info['color'],
+                        'subject_short': subject_info['short'],
+                        'upto_time': work.get('upto_time', 0),
+                        'is_exam': is_exam,
+                        'start_time': start_time,
+                        'has_content': has_content
+                    }
+                    
+                    works_data.append(work_data)
 
-                    # 更新已处理记录
-                    processed_works.add(work['file_path'])
-                    processed_count += 1
+            return jsonify(works_data)
 
-        # 保存更新后的数据
-        if processed_count > 0:
-            data_manager.save_works_info(current_date_str, works_info)
-            data_manager.save_processed_works(current_date_str, processed_works)
-            last_scan_time = int(time.time())
-            print(f"{LogColor.SUCCESS}[{get_time_stamp()}] [扫描任务] 成功处理{processed_count}个作业{LogColor.RESET}")
-        else:
-            print(f"{LogColor.INFO}[{get_time_stamp()}] [扫描任务] 未发现新作业{LogColor.RESET}")
+        @self.app.route('/api/work/<date_str>/<work_id>')
+        def get_work_details(date_str, work_id):
+            work_details = self.data_manager.load_work_details(date_str, work_id)
 
-    except Exception as e:
-        print(f"{LogColor.ERROR}[{get_time_stamp()}] [扫描任务] 执行失败：{str(e)}{LogColor.RESET}")
-    finally:
-        scan_in_progress = False
+            if not work_details:
+                return jsonify({'error': '作业不存在'}), 404
+            
+            # 添加学科信息
+            subject_info = self.config_manager.get_subject_info(work_details.get('subject_id', 0))
+            work_details['subject_info'] = subject_info
 
-# ---------------------- 扫描循环任务 ----------------------
-def scan_loop():
-    """扫描循环，支持定时扫描"""
-    global scan_in_progress
-    while True:
-        try:
-            if not scan_in_progress:
-                perform_scan()
+            # 兼容旧数据
+            if 'is_exam' not in work_details:
+                work_details['is_exam'] = False
+            if 'start_time' not in work_details:
+                if 'scan_time' in work_details:
+                    scan_time_str = work_details['scan_time']
+                    scan_dt = datetime.strptime(scan_time_str, "%Y-%m-%d %H:%M:%S")
+                    work_details['start_time'] = int(scan_dt.timestamp() * 1000)
+                else:
+                    work_details['start_time'] = 0
 
-            # 等待检查间隔
-            time.sleep(config_manager.get_check_interval())
-        except Exception as e:
-            print(f"{LogColor.ERROR}[{get_time_stamp()}] [扫描循环] 错误：{str(e)}{LogColor.RESET}")
-            time.sleep(60)  # 出错时等待1分钟再重试
+            return jsonify(work_details)
 
-# ---------------------- Flask路由 ----------------------
-@app.route('/')
-def main_page():
-    """主页面"""
-    return render_template('main_page.html')
+        @self.app.route('/api/calendar')
+        def get_calendar_data():
+            calendar_data = {}
+            today = datetime.now()
 
-@app.route('/work/<date_str>/<work_id>')
-def work_page(date_str, work_id):
-    """作业详情页面"""
-    return render_template('work_page.html', date_str=date_str[:6], work_id=work_id)
+            for i in range(3):
+                date = today - timedelta(days=30 * i)
+                month_str = date.strftime("%Y%m")
 
-@app.route('/api/config')
-def get_config():
-    """获取配置信息"""
-    return jsonify(config_manager.config)
+                works_info = self.data_manager.load_works_info(month_str)
+                month_data = {}
 
-@app.route('/api/config/reload', methods=['POST'])
-def reload_config():
-    """重新加载配置"""
-    config_manager.load_config()
-    return jsonify({'status': 'success', 'message': '配置已重新加载'})
+                for work in works_info.values():
+                    work_date = work.get('work_date', '')
+                    if work_date:
+                        formatted_date = f"{work_date[:4]}-{work_date[4:6]}-{work_date[6:8]}"
+                        if formatted_date not in month_data:
+                            month_data[formatted_date] = 0
+                        month_data[formatted_date] += 1
 
-@app.route('/es5/<path:filename>')
-def serve_es5_files(filename):
-    """提供es5目录下的静态文件（包括MathJax）"""
-    es5_dir = "/storage/emulated/0/1/answers/es5"
-    try:
-        return send_from_directory(es5_dir, filename)
-    except FileNotFoundError:
-        return "File not found", 404
+                calendar_data[month_str] = month_data
 
-@app.route('/api/status')
-def get_status():
-    """获取服务器状态"""
-    last_scan_time_str = "从未扫描"
-    if last_scan_time > 0:
-        last_scan_dt = datetime.fromtimestamp(last_scan_time)
-        last_scan_time_str = last_scan_dt.strftime("%Y-%m-%d %H:%M:%S")
+            return jsonify(calendar_data)
 
-    # 计算总作业数
-    total_works = 0
-    try:
-        # 获取所有月份的作业信息
-        if os.path.exists(OUTPUT_BASE_DIR):
-            for month_dir in os.listdir(OUTPUT_BASE_DIR):
-                if len(month_dir) == 6 and month_dir.isdigit():  # 年月目录
-                    works_info = data_manager.load_works_info(month_dir)
-                    total_works += len(works_info.get('works', []))
-    except Exception as e:
-        print(f"{LogColor.ERROR}[{get_time_stamp()}] [状态] 计算总作业数失败：{str(e)}{LogColor.RESET}")
+    def run(self, host='0.0.0.0', port=8001):
+        """运行Web服务"""
+        self.app.run(host=host, port=port, debug=False)
 
-    status = {
-        'last_scan_time': last_scan_time,
-        'last_scan_time_str': last_scan_time_str,
-        'check_interval': config_manager.get_check_interval(),
-        'scan_in_progress': scan_in_progress,
-        'total_works': total_works,
-        'current_date_str': current_date_str
-    }
 
-    return jsonify(status)
+# ============================================================================
+# 主程序
+# ============================================================================
 
-@app.route('/api/scan', methods=['POST'])
-def trigger_scan():
-    """触发扫描"""
-    global scan_in_progress
+def main():
+    """程序主入口"""
 
-    if scan_in_progress:
-        return jsonify({'status': 'error', 'message': '扫描正在进行中'})
+    # 路径常量
+    CONFIG_FILE = "/storage/emulated/0/1/program/获取答案/config.json"
+    DATABASE_PATH = "/storage/emulated/0/xuehai/5210/databases/com.xh.acldstu/1364978/xh_yunzuoye.db"
+    FILE_BASE_DIR = "/storage/emulated/0/xuehai/5210/filebases/com.xh.acldstu/1364978/"
+    OUTPUT_BASE_DIR = "/storage/emulated/0/1/answers"
 
-    # 在后台线程中执行扫描
-    threading.Thread(target=perform_scan, daemon=True).start()
+    # 初始化日志
+    logger = Logger()
 
-    return jsonify({'status': 'success', 'message': '扫描已开始'})
+    # 初始化各组件
+    logger.set_action("系统初始化")
+    
+    config_manager = ConfigManager(CONFIG_FILE, logger)
+    data_manager = DataManager(OUTPUT_BASE_DIR, logger)
+    db_extractor = DatabaseExtractor(DATABASE_PATH, FILE_BASE_DIR, data_manager, logger)
+    work_processor = WorkFileProcessor(FILE_BASE_DIR, logger, db_extractor)
+    scanner = Scanner(config_manager, data_manager, db_extractor, work_processor, logger)
+    web_service = WebService(scanner, config_manager, data_manager)
 
-@app.route('/api/works')
-def get_works():
-    """获取指定日期的作业列表"""
-    date_param = request.args.get('date', '')
-    if not date_param:
-        return jsonify([])
+    logger.success("系统初始化完成")
+    logger.clear_action()
 
-    # 将YYYY-MM-DD转换为YYYYMMDD
-    search_date = date_param.replace('-', '')
-    works_data = []
-
-    # 查找对应月份的作业
-    month_str = search_date[:6]  # 年月部分
-    works_info = data_manager.load_works_info(month_str)
-
-    for work in works_info.get('works', []):
-        # 检查作业日期是否匹配
-        if work.get('work_date', '').startswith(search_date):
-            subject_info = config_manager.get_subject_info(work['subject_id'])
-            works_data.append({
-                'work_id': work['work_id'],
-                'work_name': work['work_name'],
-                'subject_id': work['subject_id'],
-                'subject_name': subject_info['name'],
-                'subject_color': subject_info['color'],
-                'subject_short': subject_info['short'],
-                'upto_time': work.get('upto_time', ''),
-                'scan_time': work['scan_time']
-            })
-
-    return jsonify(works_data)
-
-@app.route('/api/work/<date_str>/<work_id>')
-def get_work_details(date_str, work_id):
-    """获取作业详情"""
-    work_details = data_manager.load_work_details(date_str[:6], work_id)
-    if not work_details:
-        return jsonify({'error': '作业不存在'}), 404
-
-    # 添加科目信息
-    subject_info = config_manager.get_subject_info(work_details['subject_id'])
-    work_details['subject_info'] = subject_info
-
-    return jsonify(work_details)
-
-@app.route('/api/calendar')
-def get_calendar_data():
-    """获取日历数据（有作业的日期）"""
-    # 获取最近3个月的数据
-    calendar_data = {}
-    today = datetime.now()
-
-    for i in range(3):
-        date = today - timedelta(days=30 * i)
-        month_str = date.strftime("%Y%m")
-
-        works_info = data_manager.load_works_info(month_str)
-        month_data = {}
-
-        for work in works_info.get('works', []):
-            work_date = work.get('work_date', '')
-            if work_date:
-                # 转换为YYYY-MM-DD格式
-                formatted_date = f"{work_date[:4]}-{work_date[4:6]}-{work_date[6:8]}"
-                if formatted_date not in month_data:
-                    month_data[formatted_date] = 0
-                month_data[formatted_date] += 1
-
-        calendar_data[month_str] = month_data
-
-    return jsonify(calendar_data)
-
-# ---------------------- 程序入口 ----------------------
-if __name__ == "__main__":
     # 启动扫描循环线程
-    scan_thread = threading.Thread(target=scan_loop, daemon=True)
+    scan_thread = threading.Thread(target=scanner.start_scan_loop, daemon=True)
     scan_thread.start()
 
-    print(f"{LogColor.BOLD}{LogColor.INFO}[{get_time_stamp()}] ===== 自动答案提取系统 (Flask版) ====={LogColor.RESET}")
-    print(f"{LogColor.SUCCESS}[{get_time_stamp()}] 服务器启动，地址：http://localhost:5000{LogColor.RESET}")
-    print(f"{LogColor.INFO}[{get_time_stamp()}] 检查间隔：{config_manager.get_check_interval()}秒{LogColor.RESET}")
+    # 打印启动信息
+    print(f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}")
+    print(f"{Logger.Colors.SUCCESS}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 服务器启动，地址：http://localhost:8001{Logger.Colors.RESET}")
+    print(f"{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 检查间隔：{config_manager.get_check_interval()}秒{Logger.Colors.RESET}")
 
-    # 启动Flask应用
-    app.run(host='0.0.0.0', port=8001, debug=False)
+    # 启动Web服务
+    web_service.run()
+
+
+if __name__ == "__main__":
+    main()
