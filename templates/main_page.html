@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>作业查看器</title>
+    <style>
+        :root {
+            /* 主题色 */
+            --color-primary: #3b82f6;
+            --color-primary-dark: #2563eb;
+            --color-secondary: #10b981;
+            --color-secondary-dark: #059669;
+            --color-warning: #f59e0b;
+            --color-accent: #346ac1;
+
+            /* 背景色 */
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --bg-card-hover: rgba(255, 255, 255, 0.05);
+            --bg-list: rgba(0, 0, 0, 0.1);
+            --bg-status: rgba(255, 255, 255, 0.03);
+            --bg-date: rgba(255, 255, 255, 0.03);
+            --bg-date-disabled: rgba(255, 255, 255, 0.01);
+            --bg-date-work: rgba(52, 168, 83, 0.2);
+            --bg-date-no-work: rgba(255, 255, 255, 0.02);
+
+            /* 文本色 */
+            --text-primary: rgba(255, 255, 255, 0.9);
+            --text-secondary: rgba(255, 255, 255, 0.8);
+            --text-tertiary: rgba(255, 255, 255, 0.6);
+            --text-disabled: rgba(255, 255, 255, 0.3);
+
+            /* 边框色 */
+            --border-primary: rgba(255, 255, 255, 0.05);
+            --border-secondary: rgba(255, 255, 255, 0.08);
+            --border-date: rgba(255, 255, 255, 0.05);
+            --border-date-hover: rgba(59, 130, 246, 0.5);
+            --border-date-active: rgba(59, 130, 246, 0.8);
+            --border-date-work: #34a853;
+            --border-date-work-active: rgba(16, 185, 129, 0.8);
+
+            /* 阴影 */
+            --shadow-primary: 0 8px 32px rgba(0, 0, 0, 0.3);
+            --shadow-hover: 0 12px 40px rgba(0, 0, 0, 0.4);
+            --shadow-btn: 0 4px 15px rgba(66, 133, 244, 0.3);
+            --shadow-btn-hover: 0 6px 20px rgba(59, 130, 246, 0.35);
+            --shadow-card: 0 4px 15px rgba(0,0,0,0.2);
+            --shadow-card-hover: 0 8px 25px rgba(0,0,0,0.2);
+            --shadow-date-active: 0 4px 12px rgba(59, 130, 246, 0.25);
+            --shadow-date-work-active: 0 4px 12px rgba(16, 185, 129, 0.25);
+            --shadow-month: 0 2px 8px rgba(0, 0, 0, 0.1);
+            --shadow-subject: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            min-height: 100vh;
+            padding: 20px;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, var(--bg-primary) 100%);
+        }
+
+        /* 背景装饰元素 */
+        body::before, body::after {
+            content: '';
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.2;
+            z-index: -1;
+        }
+
+        body::before {
+            width: 600px;
+            height: 600px;
+            background: var(--color-primary);
+            top: -300px;
+            right: -100px;
+            animation: float 20s infinite ease-in-out;
+        }
+
+        body::after {
+            width: 500px;
+            height: 500px;
+            background: var(--color-secondary);
+            bottom: -250px;
+            left: -150px;
+            animation: float 25s infinite ease-in-out 2s;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            backdrop-filter: blur(35px);
+            -webkit-backdrop-filter: blur(35px);
+            border-radius: 20px;
+            box-shadow: var(--shadow-primary);
+            overflow: hidden;
+            border: 1px solid var(--border-secondary);
+        }
+
+        .container:hover {
+            box-shadow: var(--shadow-hover);
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-status);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            padding: 20px 25px;
+            border-bottom: 1px solid var(--border-primary);
+            color: var(--text-primary);
+        }
+
+        .status-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .calendar-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        .calendar-toggle:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .calendar-toggle svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        .status-info {
+            display: flex;
+            gap: 20px;
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-badge, .subject-badge {
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-badge.blue, .subject-badge.blue {
+            background: rgba(59, 130, 246, 0.15);
+            border: 2px solid rgba(59, 130, 246, 0.3);
+            color: rgba(59, 130, 246, 0.9);
+        }
+
+        .status-badge.green, .subject-badge.green {
+            background: rgba(16, 185, 129, 0.15);
+            border: 2px solid rgba(16, 185, 129, 0.3);
+            color: rgba(16, 185, 129, 0.9);
+        }
+
+        .status-badge.yellow, .subject-badge.yellow {
+            background: rgba(245, 158, 11, 0.15);
+            border: 2px solid rgba(245, 158, 11, 0.3);
+            color: rgba(245, 158, 11, 0.9);
+        }
+
+        .scan-btn {
+            background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+            color: var(--text-primary);
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: var(--shadow-btn);
+        }
+
+        .scan-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-btn-hover);
+        }
+
+        .scan-btn:disabled {
+            background: rgba(255, 255, 255, 0.05);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* 重载配置按钮样式修改 - 无背景，位于扫描按钮正左边，尺寸略小 */
+        .reload-config-btn {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            margin-right: 10px;
+            border-radius: 25px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            width: 36px;  /* 略小于扫描按钮高度 */
+            height: 36px; /* 略小于扫描按钮高度 */
+        }
+
+        .reload-config-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* 齿轮图标样式 */
+        .reload-config-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+            transition: transform 0.5s ease;
+        }
+
+        /* 旋转动画 - 点击时旋转一圈 */
+        .reload-config-btn.rotate svg {
+            transform: rotate(360deg);
+        }
+
+        /* 悬停提示 */
+        .reload-config-btn::after {
+            content: '重载配置';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            margin-bottom: 5px;
+        }
+
+        .reload-config-btn:hover::after {
+            opacity: 1;
+        }
+
+        /* 按钮容器 - 确保按钮水平排列 */
+        .action-buttons {
+            display: flex;
+            align-items: center;
+        }
+
+        .content {
+            display: flex;
+            min-height: 600px;
+        }
+
+        .sidebar {
+            width: 320px;
+            background: var(--bg-card);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border-right: 1px solid var(--border-primary);
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+
+        .calendar-section {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .month-section {
+            margin-bottom: 25px;
+        }
+
+        .month-title {
+            background: var(--bg-status);
+            color: var(--text-secondary);
+            padding: 12px;
+            text-align: center;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            font-weight: 600;
+            font-size: 15px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--border-primary);
+            box-shadow: var(--shadow-month);
+        }
+
+        .dates-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 6px;
+        }
+
+        /* 日期项基础样式 */
+        .date-item {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-date);
+            border: 3px solid var(--border-date);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            color: var(--text-secondary);
+            position: relative;
+        }
+
+        .date-item:hover {
+            border-color: var(--border-date-hover);
+            transform: scale(1.05);
+            color: var(--text-primary);
+        }
+
+        /* 无作业日期和未来日期保持相同样式 */
+        .date-item.no-work,
+        .date-item.disabled {
+            background: var(--bg-date-no-work);
+            color: var(--text-disabled);
+            cursor: default;
+        }
+
+        .date-item.no-work:hover,
+        .date-item.disabled:hover {
+            transform: none;
+            border-color: var(--border-date);
+        }
+
+        /* 有作业的日期 - 基础样式，亮度将通过JavaScript动态设置 */
+        .date-item.has-work {
+            border-color: rgba(255, 255, 255, 0.15);
+            color: rgba(255, 255, 255, 0.9);
+            position: relative;
+        }
+
+        /* 有作业日期的悬停状态 - 边框变蓝 */
+        .date-item.has-work:hover {
+            border-color: var(--border-date-hover);
+        }
+
+        /* 活跃状态的有作业日期 - 使用蓝色背景和边框 */
+        .date-item.has-work.active {
+            background: var(--color-primary);
+            border-color: var(--border-date-active);
+            box-shadow: var(--shadow-date-active);
+            color: rgba(255, 255, 255, 0.95);
+            filter: none !important;
+        }
+
+        /* 作业数量提示 */
+        .date-item.has-work::after {
+            content: attr(data-work-count);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            margin-bottom: 5px;
+        }
+
+        .date-item.has-work:hover::after {
+            opacity: 1;
+        }
+
+        .works-list {
+            flex: 1;
+            padding: 25px;
+            overflow-y: auto;
+            background: var(--bg-list);
+        }
+
+        .works-header-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--color-accent);
+        }
+
+        .works-header {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .works-grid {
+            display: grid;
+            gap: 15px;
+        }
+
+        .work-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--border-primary);
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: var(--shadow-card);
+        }
+
+        .work-card:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-card-hover);
+            border-color: rgba(var(--subject-r), var(--subject-g), var(--subject-b), 0.3);
+            background: var(--bg-card-hover);
+        }
+
+        /* 无URL作业卡片样式 */
+        .work-card.no-url {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background: var(--bg-card);
+            border-color: var(--border-primary);
+        }
+
+        .work-card.no-url:hover {
+            transform: none;
+            box-shadow: var(--shadow-card);
+            border-color: var(--border-primary);
+            background: var(--bg-card);
+        }
+
+        /* 无URL徽章样式 */
+        .no-url-badge {
+            background: rgba(255, 87, 34, 0.15);
+            border: 2px solid rgba(255, 87, 34, 0.3);
+            color: rgba(255, 87, 34, 0.9);
+        }
+
+        .work-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .subject-badge {
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            margin-right: 15px;
+            flex-shrink: 0;
+            box-shadow: var(--shadow-subject);
+            padding: 0;
+        }
+
+        .work-title {
+            flex: 1;
+        }
+
+        .work-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            font-size: 16px;
+            line-height: 1.4;
+        }
+
+        .work-meta {
+            font-size: 13px;
+            color: var(--text-tertiary);
+        }
+
+        .work-time-info {
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .work-time-info.blue {
+            color: var(--color-primary);
+        }
+
+        .work-time-info.yellow {
+            color: var(--color-warning);
+        }
+
+        .work-time-info.green {
+            color: var(--color-secondary);
+        }
+
+        .work-time-info.gray {
+            color: var(--text-disabled);
+        }
+
+        .work-time-info.red {
+            color: #ef4444;
+        }
+
+        .no-works {
+            text-align: center;
+            color: var(--text-tertiary);
+            padding: 60px 20px;
+            font-size: 16px;
+        }
+
+        .loading {
+            text-align: center;
+            color: var(--color-primary);
+            padding: 40px 20px;
+        }
+
+        .loading-spinner {
+            border: 3px solid rgba(255, 255, 255, 0.05);
+            border-top: 3px solid var(--color-primary);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        /* 遮罩层 */
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(8px);
+            z-index: 998;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .overlay.active {
+            display: block;
+            opacity: 1;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        @media (max-width: 768px) {
+            /* 竖屏时日历切换按钮移至日期标题左侧 */
+            .status-left .calendar-toggle {
+                display: none;
+            }
+
+            .works-header-container .calendar-toggle {
+                display: block;
+            }
+
+            .content {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100%;
+                z-index: 999;
+                transform: translateX(-100%);
+                width: 85%;
+                max-width: 320px;
+                transition: transform 0.3s ease;
+            }
+
+            .sidebar.active {
+                transform: translateX(0);
+            }
+
+            .works-list {
+                width: 100%;
+            }
+
+            body.sidebar-open {
+                overflow: hidden;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status-bar">
+            <div class="status-left">
+                <button class="calendar-toggle" id="calendarToggle">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"> 
+                        <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/> 
+                    </svg>
+                </button>
+                <div class="status-info">
+                    <div class="status-item">
+                        <span>上次扫描:</span>
+                        <span id="lastScanTime" class="status-badge blue">从未扫描</span>
+                    </div>
+                    <div class="status-item">
+                        <span>作业总数:</span>
+                        <span id="totalWorks" class="status-badge blue">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span>扫描状态:</span>
+                        <span id="scanStatus" class="status-badge green">就绪</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 使用按钮容器确保水平排列，重载按钮在扫描按钮正左边 -->
+            <div class="action-buttons">
+                <button class="reload-config-btn" id="reloadConfigBtn" onclick="reloadConfig()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                        <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.66-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.58.25-1.14.59-1.66.98l-2.49-1c-.22-.08-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.64-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.66.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.58-.25 1.14-.59 1.66-.98l2.49 1c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zm-7.43 2.52c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+                    </svg>
+                </button>
+                <button class="scan-btn" id="scanBtn" onclick="triggerScan()">
+                    <span>立即扫描</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 遮罩层 -->
+        <div class="overlay" id="overlay"></div>
+
+        <div class="content">
+            <div class="sidebar" id="sidebar">
+                <div class="calendar-section">
+                    <div id="calendar">
+                        <!-- 日历将通过JavaScript动态生成 -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="works-list">
+                <!-- 竖屏时日历切换按钮移至日期标题左侧 -->
+                <div class="works-header-container">
+                    <button class="calendar-toggle" id="mobileCalendarToggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"> 
+                            <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/> 
+                        </svg>
+                    </button>
+                    <div class="works-header" id="worksHeader">选择日期查看作业</div>
+                </div>
+                <div id="worksContainer">
+                    <div class="no-works">
+                        <div>请从左侧选择日期查看作业</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentDate = '';
+        let isMobile = window.innerWidth <= 768;
+        let calendarData = {};
+
+        // 初始化页面
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCalendarData();
+            updateStatus();
+            loadWorksForToday();
+
+            // 添加移动端事件监听
+            setupMobileEvents();
+
+            // 监听窗口大小变化
+            window.addEventListener('resize', function() {
+                isMobile = window.innerWidth <= 768;
+            });
+        });
+
+        // 加载日历数据
+        async function loadCalendarData() {
+            try {
+                const response = await fetch('/api/calendar');
+                calendarData = await response.json();
+                generateCalendar();
+            } catch (error) {
+                console.error('加载日历数据失败:', error);
+                generateCalendar(); // 即使失败也生成日历
+            }
+        }
+
+        // 设置移动端事件
+        function setupMobileEvents() {
+            const calendarToggle = document.getElementById('calendarToggle');
+            const mobileCalendarToggle = document.getElementById('mobileCalendarToggle');
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+
+            // 切换侧边栏显示 - 桌面端按钮
+            calendarToggle.addEventListener('click', function() {
+                openSidebar();
+            });
+
+            // 切换侧边栏显示 - 移动端按钮
+            mobileCalendarToggle.addEventListener('click', function() {
+                openSidebar();
+            });
+
+            // 点击遮罩层关闭侧边栏
+            overlay.addEventListener('click', function() {
+                closeSidebar();
+            });
+
+            // 点击日期项时关闭侧边栏（移动端）
+            document.addEventListener('click', function(e) {
+                if (e.target.classList.contains('date-item') && !e.target.classList.contains('disabled') && !e.target.classList.contains('no-work') && isMobile) {
+                    setTimeout(closeSidebar, 80);
+                }
+            });
+        }
+
+        // 打开侧边栏
+        function openSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+            const body = document.body;
+
+            sidebar.classList.add('active');
+            overlay.classList.add('active');
+            if (isMobile) {
+                body.classList.add('sidebar-open');
+            }
+        }
+
+        // 关闭侧边栏
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+            const body = document.body;
+
+            sidebar.classList.remove('active');
+            overlay.classList.remove('active');
+            body.classList.remove('sidebar-open');
+        }
+
+        // 生成日历
+        function generateCalendar() {
+            const calendar = document.getElementById('calendar');
+            calendar.innerHTML = '';
+
+            // 生成最近3个月的日历
+            for (let i = 0; i < 3; i++) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                const monthSection = createMonthSection(date);
+                calendar.appendChild(monthSection);
+            }
+        }
+
+        // 创建月份区块
+        function createMonthSection(date) {
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', 
+                              '七月', '八月', '九月', '十月', '十一月', '十二月'];
+
+            const section = document.createElement('div');
+            section.className = 'month-section';
+
+            // 月份标题
+            const title = document.createElement('div');
+            title.className = 'month-title';
+            title.textContent = `${year}年 ${monthNames[month]}`;
+            section.appendChild(title);
+
+            // 日期网格
+            const grid = document.createElement('div');
+            grid.className = 'dates-grid';
+
+            // 获取当月第一天和最后一天
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+            const daysInMonth = lastDay.getDate();
+
+            // 获取今天的日期
+            const today = new Date();
+            const todayYear = today.getFullYear();
+            const todayMonth = today.getMonth();
+            const todayDate = today.getDate();
+
+            // 添加空白格子以对齐星期几
+            const firstDayOfWeek = firstDay.getDay() || 7; // 转换为周一为1，周日为7
+            for (let i = 1; i < firstDayOfWeek; i++) {
+                const emptyItem = document.createElement('div');
+                emptyItem.className = 'date-item disabled';
+                emptyItem.style.visibility = 'hidden';
+                grid.appendChild(emptyItem);
+            }
+
+            // 添加日期项
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateItem = document.createElement('div');
+                dateItem.className = 'date-item';
+                dateItem.textContent = day;
+
+                // 检查是否为未来日期
+                const isFutureDate = 
+                    (year > todayYear) ||
+                    (year === todayYear && month > todayMonth) ||
+                    (year === todayYear && month === todayMonth && day > todayDate);
+
+                // 检查是否有作业
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const monthKey = `${year}${String(month + 1).padStart(2, '0')}`;
+                const workCount = calendarData[monthKey]?.[dateStr] || 0;
+
+                if (isFutureDate) {
+                    dateItem.classList.add('disabled');
+                } else if (workCount > 0) {
+                    dateItem.classList.add('has-work');
+                    
+                    // 设置作业数量提示
+                    dateItem.setAttribute('data-work-count', `${workCount}个作业`);
+
+                    // 使用闭包确保每个日期项有正确的点击处理
+                    dateItem.addEventListener('click', function(e) {
+                        selectDate.call(this, e, year, month, day);
+                    });
+
+                    // 根据作业数量动态调整亮度（90%-130%）
+                    const minBrightness = 0.9;
+                    const maxBrightness = 1.3;
+                    const brightnessStep = (maxBrightness - minBrightness) / 5;
+
+                    // 计算最终亮度
+                    const brightness = Math.min(minBrightness + (workCount - 1) * brightnessStep, maxBrightness);
+
+                    // 应用动态亮度
+                    dateItem.style.filter = `brightness(${brightness})`;
+                } else {
+                    dateItem.classList.add('no-work');
+                }
+
+                // 检查今天
+                if (year === todayYear && month === todayMonth && day === todayDate) {
+                    dateItem.classList.add('active');
+                    if (!isFutureDate && workCount > 0) {
+                        currentDate = dateStr;
+                    }
+                }
+
+                grid.appendChild(dateItem);
+            }
+
+            section.appendChild(grid);
+            return section;
+        }
+
+        // 选择日期
+        function selectDate(event, year, month, day) {
+            // 移除之前的活跃状态
+            document.querySelectorAll('.date-item.active').forEach(item => {
+                item.classList.remove('active');
+                // 恢复未选中状态的动态亮度
+                if (item.classList.contains('has-work')) {
+                    const workCount = parseInt(item.getAttribute('data-work-count') || '1');
+                    const minBrightness = 0.9;
+                    const maxBrightness = 1.3;
+                    const brightnessStep = (maxBrightness - minBrightness) / 5;
+                    const brightness = Math.min(minBrightness + (workCount - 1) * brightnessStep, maxBrightness);
+                    item.style.filter = `brightness(${brightness})`;
+                }
+            });
+
+            // 确保我们获取的是日期项元素
+            let targetElement = event.target;
+            while (targetElement && !targetElement.classList.contains('date-item')) {
+                targetElement = targetElement.parentElement;
+            }
+
+            if (targetElement && targetElement.classList.contains('date-item')) {
+                // 设置新的活跃状态
+                targetElement.classList.add('active');
+                targetElement.style.filter = 'none';
+
+                currentDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                loadWorks(currentDate);
+            }
+        }
+
+        // 加载今日作业
+        function loadWorksForToday() {
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            loadWorks(todayStr);
+        }
+
+        // 加载指定日期的作业
+        async function loadWorks(date) {
+            try {
+                const worksContainer = document.getElementById('worksContainer');
+                const worksHeader = document.getElementById('worksHeader');
+
+                worksHeader.textContent = `${date} 的作业`;
+                worksContainer.innerHTML = `
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <div>加载中...</div>
+                    </div>
+                `;
+
+                const response = await fetch(`/api/works?date=${date}`);
+                const works = await response.json();
+                displayWorks(works, date);
+            } catch (error) {
+                console.error('加载作业失败:', error);
+                document.getElementById('worksContainer').innerHTML = `
+                    <div class="no-works">
+                        <div>加载失败，请重试</div>
+                    </div>
+                `;
+            }
+        }
+
+        // 格式化时间显示
+        function formatTimeDisplay(work) {
+            const now = Date.now();
+            let timeHtml = '';
+            let timeClass = 'blue';
+            
+            if (work.is_exam) {
+                // 考试：使用START_TIME和END_TIME
+                const startTime = work.start_time;
+                const endTime = work.upto_time; // 注意：在v7中，考试的upto_time被设置为END_TIME
+                
+                if (now < startTime) {
+                    // 考试未开始
+                    const diff = startTime - now;
+                    const hours = Math.floor(diff / (1000 * 60 * 60));
+                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    
+                    if (hours > 0) {
+                        timeHtml = `距离开始: ${hours}小时${minutes}分钟`;
+                        timeClass = 'green';
+                    } else if (minutes > 0) {
+                        timeHtml = `距离开始: ${minutes}分钟`;
+                        timeClass = 'yellow';
+                    } else {
+                        timeHtml = '即将开始';
+                        timeClass = 'yellow';
+                    }
+                } else if (now < endTime) {
+                    // 考试进行中
+                    const diff = endTime - now;
+                    const hours = Math.floor(diff / (1000 * 60 * 60));
+                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    
+                    if (hours > 0) {
+                        timeHtml = `距离结束: ${hours}小时${minutes}分钟`;
+                        timeClass = 'yellow';
+                    } else if (minutes > 0) {
+                        timeHtml = `距离结束: ${minutes}分钟`;
+                        timeClass = 'red';
+                    } else {
+                        timeHtml = '即将结束';
+                        timeClass = 'red';
+                    }
+                } else {
+                    // 考试已结束
+                    timeHtml = '已结束';
+                    timeClass = 'gray';
+                }
+            } else {
+                // 作业：使用UPTO_TIME
+                const uptoTime = parseInt(work.upto_time);
+                const timeDiff = uptoTime - now;
+                const twoHours = 2 * 60 * 60 * 1000;
+                
+                if (timeDiff < 0) {
+                    timeHtml = '已截止';
+                    timeClass = 'gray';
+                } else if (timeDiff < twoHours) {
+                    const minutes = Math.floor(timeDiff / (1000 * 60));
+                    timeHtml = `距离截止: ${minutes}分钟`;
+                    timeClass = 'red';
+                } else {
+                    const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+                    if (hours > 24) {
+                        const days = Math.floor(hours / 24);
+                        timeHtml = `距离截止: ${days}天${hours % 24}小时`;
+                    } else {
+                        timeHtml = `距离截止: ${hours}小时`;
+                    }
+                    timeClass = 'blue';
+                }
+            }
+            
+            return { timeHtml, timeClass };
+        }
+
+        // 显示作业列表
+        function displayWorks(works) {
+            const worksContainer = document.getElementById('worksContainer');
+            if (!worksContainer) return;
+
+            if (works.length === 0) {
+                worksContainer.innerHTML = `
+                    <div class="no-works">
+                        <div>该日期没有作业</div>
+                    </div>
+                `;
+                return;
+            }
+
+            worksContainer.innerHTML = `
+                <div class="works-grid">
+                    ${works.map(work => {
+                        const hasContent = work.has_content !== undefined ? work.has_content : true;
+                        const isNoUrl = !hasContent;
+                        const subjectColor = work.subject_color || '#9E9E9E';
+                        const rgbColor = hexToRgb(subjectColor);
+                        const bla = 0.3;
+                        const blendedR = Math.round(rgbColor.r * (1 - bla));
+                        const blendedG = Math.round(rgbColor.g * (1 - bla));
+                        const blendedB = Math.round(rgbColor.b * (1 - bla));
+
+                        const bgColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.15)`;
+                        const borderColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.3)`;
+                        const textColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.9)`;
+
+                        // 获取时间显示
+                        const { timeHtml, timeClass } = formatTimeDisplay(work);
+
+                        return `
+                            <div class="work-card ${isNoUrl ? 'no-url' : ''}" 
+                                ${!isNoUrl ? `onclick="openWork('${work.work_id}', '${currentDate ? currentDate.replace(/-/g, '') : new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, '0') + String(new Date().getDate()).padStart(2, '0')}')"` : ''}
+                                style="--subject-r: ${blendedR};
+                                    --subject-g: ${blendedG};
+                                    --subject-b: ${blendedB};">
+                                <div class="work-header">
+                                    <div class="subject-badge" 
+                                        style="background: ${bgColor};
+                                                border: 3px solid ${borderColor};
+                                                color: ${textColor};">
+                                        ${work.subject_short}
+                                    </div>
+                                    <div class="work-title">
+                                        <div class="work-name">${work.work_name}</div>
+                                        <div class="work-meta">
+                                            ${work.subject_name}
+                                        </div>
+                                        <div class="work-time-info ${timeClass}">${timeHtml}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // 格式化时间戳
+        function formatTimestamp(timestamp) {
+            const date = new Date(parseInt(timestamp));
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}`;
+        }
+
+        // 十六进制颜色转RGB
+        function hexToRgb(hex) {
+            const rHex = hex.slice(1, 3);
+            const gHex = hex.slice(3, 5);
+            const bHex = hex.slice(5, 7);
+
+            return {
+                r: parseInt(rHex, 16),
+                g: parseInt(gHex, 16),
+                b: parseInt(bHex, 16)
+            };
+        }
+
+        // 打开作业详情
+        function openWork(workId, dateStr) {
+            window.open(`/work/${dateStr}/${workId}`, '_blank');
+        }
+
+        // 触发扫描
+        async function triggerScan() {
+            const scanBtn = document.getElementById('scanBtn');
+            scanBtn.disabled = true;
+            scanBtn.innerHTML = '<span>扫描中...</span>';
+
+            document.getElementById('scanStatus').textContent = '扫描中';
+            document.getElementById('scanStatus').className = 'status-badge yellow';
+
+            try {
+                const response = await fetch('/api/scan', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    pollStatus();
+                } else {
+                    alert(result.message);
+                    resetScanButton();
+                }
+            } catch (error) {
+                console.error('触发扫描失败:', error);
+                resetScanButton();
+            }
+        }
+
+        // 重载配置 - 点击旋转一圈
+        async function reloadConfig() {
+            const reloadBtn = document.getElementById('reloadConfigBtn');
+            reloadBtn.classList.add('rotate'); // 添加旋转类
+
+            try {
+                const response = await fetch('/api/config/reload', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    // 等待旋转动画完成后刷新页面
+                    setTimeout(() => {
+                        location.reload();
+                    }, 500);
+                } else {
+                    alert('重载配置失败');
+                    // 移除旋转类
+                    setTimeout(() => {
+                        reloadBtn.classList.remove('rotate');
+                    }, 500);
+                }
+            } catch (error) {
+                console.error('重载配置失败:', error);
+                alert('重载配置失败');
+                // 移除旋转类
+                setTimeout(() => {
+                    reloadBtn.classList.remove('rotate');
+                }, 500);
+            }
+        }
+
+        // 轮询状态
+        function pollStatus() {
+            const checkStatus = setInterval(async () => {
+                try {
+                    const status = await updateStatus();
+                    if (!status.scan_in_progress) {
+                        clearInterval(checkStatus);
+                        loadCalendarData();
+                        if (currentDate) {
+                            loadWorks(currentDate);
+                        }
+                    }
+                } catch (error) {
+                    console.error('状态检查失败:', error);
+                    clearInterval(checkStatus);
+                    resetScanButton();
+                }
+            }, 1000);
+        }
+
+        // 重置扫描按钮
+        function resetScanButton() {
+            const scanBtn = document.getElementById('scanBtn');
+            scanBtn.disabled = false;
+            scanBtn.innerHTML = '<span>立即扫描</span>';
+        }
+
+        // 更新状态
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+
+                document.getElementById('lastScanTime').textContent = status.last_scan_time_str;
+                document.getElementById('totalWorks').textContent = status.total_works;
+
+                const scanStatus = document.getElementById('scanStatus');
+                if (status.scan_in_progress) {
+                    scanStatus.textContent = '扫描中';
+                    scanStatus.className = 'status-badge yellow';
+                } else {
+                    scanStatus.textContent = '就绪';
+                    scanStatus.className = 'status-badge green';
+                    resetScanButton();
+                }
+
+                return status;
+            } catch (error) {
+                console.error('获取状态失败:', error);
+                throw error;
+            }
+        }
+    </script>
+</body>
+</html>
