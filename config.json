@@ -1,0 +1,45 @@
+{
+  "subject_config": {
+    "1": {
+      "name": "语文",
+      "color": "#E67E22",
+      "short": "语"
+    },
+    "2": {
+      "name": "数学",
+      "color": "#4D7CFF",
+      "short": "数"
+    },
+    "3": {
+      "name": "英语",
+      "color": "#F1C40F",
+      "short": "英"
+    },
+    "7": {
+      "name": "物理",
+      "color": "#54B4FF",
+      "short": "物"
+    },
+    "8": {
+      "name": "化学",
+      "color": "#B74093",
+      "short": "化"
+    },
+    "13": {
+      "name": "通用技术",
+      "color": "#2ECC71",
+      "short": "通"
+    },
+    "15": {
+      "name": "信息技术",
+      "color": "#00BCD4",
+      "short": "信"
+    },
+    "default": {
+      "name": "未知",
+      "color": "#A0A0A0",
+      "short": "未"
+    }
+  },
+  "check_interval": 3600
+}

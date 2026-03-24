@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>作业详情</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            line-height: 1.8;
+            margin: 20px auto;
+            padding: 0 15px;
+            max-width: 850px;
+            background-color: #f5f5f5;
+        }
+        .work-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        .work-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2E7D32;
+            margin-bottom: 10px;
+        }
+        .work-meta {
+            color: #666;
+            font-size: 14px;
+        }
+        .work-time-display {
+            font-weight: bold;
+            margin-top: 10px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .work-time-display.blue {
+            background-color: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
+        }
+        .work-time-display.green {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+        }
+        .work-time-display.yellow {
+            background-color: #fff3e0;
+            color: #f57c00;
+            border: 1px solid #ffe0b2;
+        }
+        .work-time-display.red {
+            background-color: #ffebee;
+            color: #d32f2f;
+            border: 1px solid #ffcdd2;
+        }
+        .work-time-display.gray {
+            background-color: #f5f5f5;
+            color: #757575;
+            border: 1px solid #e0e0e0;
+        }
+        /* 分割线样式 */
+        .divider-section {
+            margin: 30px 0;
+            padding: 15px 0;
+            border-bottom: 3px dashed #ccc;
+            border-top: 1px solid #eee;
+        }
+        .divider-content {
+    display: inline-block;
+    padding: 0 20px;
+    background: #f5f5f5;
+            color: #666;
+    font-size: 14px;
+    position: relative;
+    z-index: 1;
+}
+
+.divider-section::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, #ccc, transparent);
+    z-index: 0;
+        }
+        /* 正常题目样式 */
+        .question {
+            margin-bottom: 25px;
+            padding: 20px;
+            background: white;
+            border-radius: 0 8px 8px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-left: 4px solid #4CAF50;
+        }
+        .question-number {
+            font-weight: bold;
+            color: #2E7D32;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        .question-type {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 1px 6px;
+            background-color: #e3f2fd;
+            color: #1976d2;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: normal;
+            border: 2px solid #bbdefb;
+        }
+        .stem {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .stem p {
+            margin: 0;
+            padding: 0;
+        }
+        .stem img {
+            align-self: center;
+            margin: 5px 0;
+            vertical-align: middle;
+        }
+        .answer-text {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+        .answer-container {
+            display: inline-flex;
+            align-items: center;
+            margin: 2px 0;
+        }
+        .copy-btn {
+            background: rgba(255, 152, 0, 0.8);
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            height: 20px;
+            font-weight: bold;
+        }
+        .copy-btn:hover {
+            background: rgba(255, 152, 0, 1);
+        }
+        .copy-icon, .check-icon {
+            width: 12px;
+            height: 12px;
+        }
+        .separate-answer {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .separate-answer-title {
+            font-weight: bold;
+            color: #d32f2f;
+            margin-right: 8px;
+            font-size: 14px;
+        }
+        .sub-questions-container {
+            margin-top: 15px;
+            border-top: 1px solid #e0e0e0;
+            padding-top: 15px;
+        }
+        .sub-question {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 0 6px 6px 0;
+            border-left: 3px solid #FF9800;
+        }
+        .sub-question-number {
+            font-weight: bold;
+            color: #FF9800;
+            margin-bottom: 8px;
+            font-size: 1em;
+            display: flex;
+            align-items: center;
+        }
+        .sub-question-type {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 1px 6px;
+            background-color: #fff3e0;
+            color: #f57c00;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: normal;
+            border: 1px solid #ffe0b2;
+        }
+        .explanation {
+            margin-top: 15px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #e0e0e0;
+        }
+        .explanation summary {
+            padding: 12px;
+            background-color: #e3f2fd;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .explanation details {
+            padding: 15px;
+            background-color: #f9f9f9;
+        }
+        .blank-answer {
+            margin: 8px 0;
+            display: flex;
+            align-items: center;
+        }
+        .blank-number {
+            font-weight: bold;
+            color: #d32f2f;
+            margin-right: 8px;
+        }
+        img {
+            max-width: 100%;
+            height: auto;
+            margin: 5px 0;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            vertical-align: middle;
+        }
+        .MathJax {
+            line-height: 1.5 !important;
+        }
+        .loading {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4CAF50;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* 实时时间更新样式 */
+        .time-update {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 13px;
+            font-weight: bold;
+            padding: 6px 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="workContent">
+        <div class="loading">
+            <div class="loading-spinner"></div>
+        </div>
+    </div>
+
+    <script>
+        // 从URL参数获取日期和作业ID
+        const urlSegments = window.location.pathname.split('/');
+        const dateStr = urlSegments[2];
+        const workId = urlSegments[3];
+        let timeUpdateInterval = null;
+
+        // 加载作业详情
+        async function loadWorkDetails() {
+            try {
+                const response = await fetch(`/api/work/${dateStr}/${workId}`);
+                const workData = await response.json();
+
+                if (workData.error) {
+                    document.getElementById('workContent').innerHTML = `
+                        <div class="loading">
+                            <div>${workData.error}</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // 确保我们有以下字段，用于时间计算
+                workData.is_exam = workData.is_exam || false;
+                workData.start_time = workData.start_time || 0;
+                workData.upto_time = workData.upto_time || 0;
+                workData.subject_info = workData.subject_info || { name: '未知学科' };
+
+                displayWorkDetails(workData);
+                
+                // 如果是考试，启动时间更新
+                if (workData.is_exam) {
+                    startTimeUpdate(workData);
+                }
+            } catch (error) {
+                console.error('加载作业详情失败:', error);
+                document.getElementById('workContent').innerHTML = `
+                    <div class="loading">
+                        <div>加载失败，请重试</div>
+                        <button onclick="location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">重新加载</button>
+                    </div>
+                `;
+            }
+        }
+
+        // 计算时间显示
+        function calculateTimeDisplay(workData) {
+            const now = Date.now();
+            let timeHtml = '';
+            let timeClass = 'blue';
+            
+            if (workData.is_exam) {
+                // 考试：使用START_TIME和END_TIME
+                const startTime = workData.start_time;
+                const endTime = workData.upto_time; // 注意：在v7中，考试的upto_time被设置为END_TIME
+                
+                if (now < startTime) {
+                    // 考试未开始
+                    const diff = startTime - now;
+                    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    
+                    if (days > 0) {
+                        timeHtml = `距离开始: ${days}天${hours}小时`;
+                        timeClass = 'green';
+                    } else if (hours > 0) {
+                        timeHtml = `距离开始: ${hours}小时${minutes}分钟`;
+                        timeClass = 'green';
+                    } else if (minutes > 0) {
+                        timeHtml = `距离开始: ${minutes}分钟`;
+                        timeClass = 'yellow';
+                    } else {
+                        timeHtml = '即将开始';
+                        timeClass = 'yellow';
+                    }
+                } else if (now < endTime) {
+                    // 考试进行中
+                    const diff = endTime - now;
+                    const hours = Math.floor(diff / (1000 * 60 * 60));
+                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                    
+                    if (hours > 0) {
+                        timeHtml = `距离结束: ${hours}小时${minutes}分钟`;
+                        timeClass = 'yellow';
+                    } else if (minutes > 0) {
+                        timeHtml = `距离结束: ${minutes}分钟${seconds}秒`;
+                        timeClass = 'red';
+                    } else if (seconds > 0) {
+                        timeHtml = `距离结束: ${seconds}秒`;
+                        timeClass = 'red';
+                    } else {
+                        timeHtml = '即将结束';
+                        timeClass = 'red';
+                    }
+                } else {
+                    // 考试已结束
+                    timeHtml = '已结束';
+                    timeClass = 'gray';
+                }
+            } else {
+                // 作业：使用UPTO_TIME
+                const uptoTime = parseInt(workData.upto_time);
+                const timeDiff = uptoTime - now;
+                const twoHours = 2 * 60 * 60 * 1000;
+                
+                if (timeDiff < 0) {
+                    timeHtml = '已截止';
+                    timeClass = 'gray';
+                } else if (timeDiff < twoHours) {
+                    const minutes = Math.floor(timeDiff / (1000 * 60));
+                    const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
+                    if (minutes > 0) {
+                        timeHtml = `距离截止: ${minutes}分钟`;
+                    } else {
+                        timeHtml = `距离截止: ${seconds}秒`;
+                    }
+                    timeClass = 'red';
+                } else {
+                    const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+                    const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+                    if (hours > 24) {
+                        const days = Math.floor(hours / 24);
+                        timeHtml = `距离截止: ${days}天${hours % 24}小时`;
+                    } else {
+                        timeHtml = `距离截止: ${hours}小时${minutes}分钟`;
+                    }
+                    timeClass = 'blue';
+                }
+            }
+            
+            return { timeHtml, timeClass };
+        }
+
+        // 启动时间更新（用于考试）
+        function startTimeUpdate(workData) {
+            // 清除之前的定时器
+            if (timeUpdateInterval) {
+                clearInterval(timeUpdateInterval);
+            }
+            
+            // 每秒更新一次时间显示
+            timeUpdateInterval = setInterval(() => {
+                const timeElement = document.querySelector('.work-time-display');
+                if (timeElement) {
+                    const { timeHtml, timeClass } = calculateTimeDisplay(workData);
+                    timeElement.innerHTML = timeHtml;
+                    timeElement.className = `work-time-display ${timeClass}`;
+                }
+            }, 1000);
+        }
+
+        // 替换题目中的<answer>标签
+        function replaceAnswerTags(question) {
+            let stemContent = question.stem_content;
+
+            // 检查是否有<answer>标签需要替换
+            const answerTagRegex = /<answer>(\d+)<\/answer>/g;
+            const hasAnswerTags = answerTagRegex.test(stemContent);
+
+            if (hasAnswerTags && question.answers && question.answers.length > 0) {
+                // 对答案按索引排序
+                const sortedAnswers = [...question.answers].sort((a, b) => a.index - b.index);
+
+                // 替换所有<answer>标签
+                stemContent = stemContent.replace(answerTagRegex, (match, indexStr) => {
+                    const index = parseInt(indexStr);
+                    if (index < sortedAnswers.length) {
+                        const answer = sortedAnswers[index];
+                        const uniqueId = `inline-answer-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                        
+                        // 根据答案数量决定显示数字还是复制图标
+                        if (question.answers.length > 1) {
+                            return `<span class="answer-container"><button class="copy-btn" onclick="copyAnswer('${uniqueId}')" title="复制答案" data-original-text="${index + 1}">${index + 1}</button><span class="answer-text" id="${uniqueId}">${answer.answer_content}</span></span>`;
+                        } else {
+                            return `<span class="answer-container"><button class="copy-btn" onclick="copyAnswer('${uniqueId}')" title="复制答案">
+                                <svg class="copy-icon" width="12" height="12" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="6" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                                <svg class="check-icon" width="12" height="12" viewBox="0 0 16 16" style="display: none;"><path d="M3 8L6 11L13 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                </button><span class="answer-text" id="${uniqueId}">${answer.answer_content}</span></span>`;
+                        }
+                    }
+                    return match;
+                });
+            }
+
+            return {
+                stemContent,
+                hasAnswerTags
+            };
+        }
+
+        // 显示作业详情
+        function displayWorkDetails(workData) {
+            try {
+                const subjectInfo = workData.subject_info;
+                
+                // 计算时间显示
+                const { timeHtml, timeClass } = calculateTimeDisplay(workData);
+
+                let htmlContent = `
+                    <div class="work-header">
+                        <div class="work-title">${workData.work_name}</div>
+                        <div class="work-meta">
+                            ${subjectInfo.name} ${workData.is_exam ? '· 考试' : '· 作业'}
+                        </div>
+                        <div class="work-time-display ${timeClass} time-update">${timeHtml}</div>
+                    </div>
+                `;
+
+                // 检查是否为无URL作业
+                if (workData.file_path && workData.file_path.startsWith('no_url_')) {
+                    htmlContent += `
+                        <div class="question" style="border-left-color: #FF5722;">
+                            <div class="question-number">无内容</div>
+                            <div class="stem">
+                                <p>此作业暂时没有内容URL，系统会持续检查，一旦有内容将自动更新。</p>
+                            </div>
+                        </div>
+                    `;
+                } else if (workData.questions && workData.questions.length > 0) {
+                    // 添加题目
+                    let currentQuestionNumber = 0;
+                    
+                    workData.questions.forEach(question => {
+                        // 检查是否为分割线（未知类型(0)）
+                        if (question.question_type === "分割线") {
+                            htmlContent += `
+                                <div class="divider-section">
+                                    <div class="divider-content">${question.stem_content || '---'}</div>
+                                </div>
+                            `;
+                            return;  // 跳过后续处理
+                        } else {
+                            // 正常题目
+                            currentQuestionNumber++;
+                            
+                            // 更新题号
+                            question.question_number = currentQuestionNumber;
+                            
+                            // 替换题目中的<answer>标签
+                            const { stemContent, hasAnswerTags } = replaceAnswerTags(question);
+
+                            htmlContent += `
+                                <div class="question">
+                                    <div class="question-number">第${question.question_number}题:
+                                        ${question.question_type ? `<span class="question-type">${question.question_type}</span>` : ''}
+                                    </div>
+                                    <div class="stem">${stemContent}</div>
+                            `;
+
+                            // 如果没有嵌入答案（即没有<answer>标签）并且有答案，则单独显示答案
+                            if (!hasAnswerTags && question.answers && question.answers.length > 0) {
+                                htmlContent += '<div class="separate-answer">';
+                                htmlContent += '<div class="separate-answer-title">答案:</div>';
+
+                                if (question.answers.length === 1) {
+                                    const answerContent = question.answers[0].answer_content || '';
+                                    htmlContent += `
+                                        <div class="answer-container">
+                                            <button class="copy-btn" onclick="copyAnswer('answer-${question.question_id}')" title="复制答案">
+                                                <svg class="copy-icon" width="12" height="12" viewBox="0 0 16 16">
+                                                    <rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                                                    <rect x="6" y="6" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                                                </svg>
+                                                <svg class="check-icon" width="12" height="12" viewBox="0 0 16 16" style="display: none;">
+                                                    <path d="M3 8L6 11L13 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                </svg>
+                                            </button>
+                                            <span class="answer-text" id="answer-${question.question_id}">${answerContent}</span>
+                                        </div>
+                                    `;
+                                } else {
+                                    question.answers.forEach((answer, index) => {
+                                        const answerContent = answer.answer_content || '';
+                                        htmlContent += `
+                                            <div class="blank-answer">
+                                                <button class="copy-btn" onclick="copyAnswer('answer-${question.question_id}-${index}')" title="复制答案" data-original-text="${index + 1}">${index + 1}</button>
+                                                <span class="answer-text" id="answer-${question.question_id}-${index}">${answerContent}</span>
+                                            </div>
+                                        `;
+                                    });
+                                }
+                                htmlContent += '</div>';
+                            }
+
+                            // 添加子题目（小题）
+                            if (question.sub_questions && question.sub_questions.length > 0) {
+                                htmlContent += '<div class="sub-questions-container">';
+
+                                let subQuestionIndex = 1;
+                                question.sub_questions.forEach(subQuestion => {
+                                    // 检查子题目是否为分割线
+                                    if (subQuestion.question_type === "未知类型(0)") {
+                                        htmlContent += `
+                                            <div class="divider-section" style="margin: 10px 0;">
+                                                <div class="divider-content" style="font-size: 14px;">${subQuestion.stem_content || '---'}</div>
+                                            </div>
+                                        `;
+                                    } else {
+                                        // 正常子题目
+                                        subQuestion.question_number = `${question.question_number}.${subQuestionIndex}`;
+                                        
+                                        // 替换子题目中的<answer>标签
+                                        const { stemContent: subStemContent, hasAnswerTags: subHasAnswerTags } = replaceAnswerTags(subQuestion);
+
+                                        htmlContent += `
+                                            <div class="sub-question">
+                                                <div class="sub-question-number">${subQuestion.question_number}:
+                                                    ${subQuestion.question_type ? `<span class="sub-question-type">${subQuestion.question_type}</span>` : ''}
+                                                </div>
+                                                <div class="stem">${subStemContent}</div>
+                                        `;
+
+                                        // 如果没有嵌入答案并且有答案，则单独显示答案
+                                        if (!subHasAnswerTags && subQuestion.answers && subQuestion.answers.length > 0) {
+                                            htmlContent += '<div class="separate-answer">';
+                                            htmlContent += '<div class="separate-answer-title">答案:</div>';
+
+                                            if (subQuestion.answers.length === 1) {
+                                                const answerContent = subQuestion.answers[0].answer_content || '';
+                                                htmlContent += `
+                                                    <div class="answer-container">
+                                                        <button class="copy-btn" onclick="copyAnswer('answer-${subQuestion.question_id}')" title="复制答案">
+                                                            <svg class="copy-icon" width="12" height="12" viewBox="0 0 16 16">
+                                                                <rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                                                                <rect x="6" y="6" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                                                            </svg>
+                                                            <svg class="check-icon" width="12" height="12" viewBox="0 0 16 16" style="display: none;">
+                                                                <path d="M3 8L6 11L13 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                            </svg>
+                                                        </button>
+                                                        <span class="answer-text" id="answer-${subQuestion.question_id}">${answerContent}</span>
+                                                    </div>
+                                                `;
+                                            } else {
+                                                subQuestion.answers.forEach((answer, index) => {
+                                                    const answerContent = answer.answer_content || '';
+                                                    htmlContent += `
+                                                        <div class="blank-answer">
+                                                            <button class="copy-btn" onclick="copyAnswer('answer-${subQuestion.question_id}-${index}')" title="复制答案" data-original-text="${index + 1}">${index + 1}</button>
+                                                            <span class="answer-text" id="answer-${subQuestion.question_id}-${index}">${answerContent}</span>
+                                                        </div>
+                                                    `;
+                                                });
+                                            }
+                                            htmlContent += '</div>';
+                                        }
+
+                                        // 添加子题目的解析
+                                        if (subQuestion.explain_content && subQuestion.explain_content.trim() !== "" && subQuestion.explain_content.trim() !== "<p>无</p>") {
+                                            htmlContent += `
+                                                <details class="explanation" onToggle="toggleExplanation(this)">
+                                                    <summary>展开解析</summary>
+                                                    <div>${subQuestion.explain_content}</div>
+                                                </details>
+                                            `;
+                                        }
+
+                                        htmlContent += '</div>';
+                                        subQuestionIndex++;
+                                    }
+                                });
+
+                                htmlContent += '</div>';
+                            }
+
+                            // 添加大题目的解析
+                            if (question.explain_content && question.explain_content.trim() !== "" && question.explain_content.trim() !== "<p>无</p>") {
+                                htmlContent += `
+                                    <details class="explanation" onToggle="toggleExplanation(this)">
+                                        <summary>展开解析</summary>
+                                        <div>${question.explain_content}</div>
+                                    </details>
+                                `;
+                            }
+
+                            htmlContent += '</div>';
+                        }
+                    });
+                } else {
+                    // 没有题目
+                    htmlContent += `
+                        <div class="question" style="border-left-color: #FF5722;">
+                            <div class="question-number">无题目</div>
+                            <div class="stem">
+                                <p>此作业暂时没有题目内容。</p>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                document.getElementById('workContent').innerHTML = htmlContent;
+
+                // 内容显示完成后，延迟加载MathJax
+                setTimeout(loadMathJax, 500);
+
+            } catch (error) {
+                console.error('显示作业详情时出错:', error);
+                document.getElementById('workContent').innerHTML = `
+                    <div class="loading">
+                        <div>显示作业详情时出错: ${error.message}</div>
+                        <button onclick="location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">重新加载</button>
+                    </div>
+                `;
+            }
+        }
+
+        // 延迟加载MathJax
+        function loadMathJax() {
+            console.log('开始加载MathJax...');
+
+            // 检查是否已经加载过MathJax
+            if (window.MathJax) {
+                console.log('MathJax已存在，重新渲染...');
+                // 如果已经加载，重新渲染数学公式
+                MathJax.typesetPromise && MathJax.typesetPromise();
+                return;
+            }
+
+            // 创建MathJax配置
+            const mathJaxConfig = document.createElement('script');
+            mathJaxConfig.textContent = `
+                window.MathJax = {
+                    tex: {
+                        inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                        displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                        packages: {'[+]': ['ams', 'boldsymbol', 'amsmath']}
+                    },
+                    svg: {
+                        fontCache: 'global'
+                    },
+                    startup: {
+                        pageReady: function() {
+                            return MathJax.startup.defaultPageReady().then(function() {
+                                console.log('MathJax初始化完成');
+                                // 确保所有数学公式都被渲染
+                                MathJax.typesetPromise && MathJax.typesetPromise();
+                            });
+                        }
+                    }
+                };
+            `;
+            document.head.appendChild(mathJaxConfig);
+
+            // 加载MathJax库
+            const mathJaxScript = document.createElement('script');
+            mathJaxScript.src = '/es5/tex-mml-chtml.js';
+            mathJaxScript.id = 'MathJax-script';
+            mathJaxScript.async = true;
+
+            mathJaxScript.onload = function() {
+                console.log('MathJax加载完成');
+            };
+
+            mathJaxScript.onerror = function() {
+                console.error('MathJax加载失败');
+            };
+
+            document.head.appendChild(mathJaxScript);
+        }
+
+        // 复制答案功能
+        function copyAnswer(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.innerText || element.textContent;
+            const button = element.previousElementSibling;
+            const copyIcon = button.querySelector('.copy-icon');
+            const checkIcon = button.querySelector('.check-icon');
+            const buttonText = button.querySelector('span:not(.copy-icon):not(.check-icon)') || button;
+
+            // 创建临时textarea元素
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+
+            // 选中并复制文本
+            textarea.select();
+            textarea.setSelectionRange(0, 99999); // 对于移动设备
+
+            try {
+                const successful = document.execCommand('copy');
+
+                // 切换图标或文本
+                if (copyIcon && checkIcon) {
+                    // 有图标的情况（单个答案）
+                    copyIcon.style.display = 'none';
+                    checkIcon.style.display = 'block';
+                    button.style.background = '#4CAF50'; // 设置背景颜色为绿色
+                } else {
+                    // 有数字的情况（多个答案）
+                    buttonText.textContent = '✓';
+                    button.style.background = '#4CAF50'; // 设置背景颜色为绿色
+                }
+
+                // 2秒后恢复原状
+                setTimeout(() => {
+                    if (copyIcon && checkIcon) {
+                        copyIcon.style.display = 'block';
+                        checkIcon.style.display = 'none';
+                        button.style.background = 'rgba(255, 152, 0, 0.8)'; // 恢复原始背景颜色
+                    } else {
+                        // 恢复数字
+                        const originalText = button.getAttribute('data-original-text');
+                        if (originalText) {
+                            buttonText.textContent = originalText;
+                        }
+                        button.style.background = 'rgba(255, 152, 0, 0.8)'; // 恢复原始背景颜色
+                    }
+                }, 2000);
+            } catch (err) {
+                console.error('复制失败:', err);
+            }
+
+            // 清理
+            document.body.removeChild(textarea);
+        }
+
+        // 切换解析显示文字
+        function toggleExplanation(details) {
+            const summary = details.querySelector('summary');
+            if (details.open) {
+                summary.textContent = '收起解析';
+            } else {
+                summary.textContent = '展开解析';
+            }
+        }
+
+        // 页面卸载时清除定时器
+        window.addEventListener('beforeunload', function() {
+            if (timeUpdateInterval) {
+                clearInterval(timeUpdateInterval);
+            }
+        });
+
+        // 页面加载完成后获取作业详情
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('页面加载完成，开始加载作业详情...');
+            loadWorkDetails();
+        });
+    </script>
+</body>
+</html>
