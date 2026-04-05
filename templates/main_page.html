@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>作业查看器</title>
     <style>
         :root {
@@ -50,7 +50,6 @@
             --shadow-card-hover: 0 8px 25px rgba(0,0,0,0.2);
             --shadow-date-active: 0 4px 12px rgba(59, 130, 246, 0.25);
             --shadow-date-work-active: 0 4px 12px rgba(16, 185, 129, 0.25);
-            --shadow-month: 0 2px 8px rgba(0, 0, 0, 0.1);
             --shadow-subject: 0 2px 8px rgba(0,0,0,0.2);
         }
 
@@ -60,10 +59,15 @@
             box-sizing: border-box;
         }
 
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
             font-family: "Microsoft YaHei", Arial, sans-serif;
             min-height: 100vh;
-            padding: 20px;
             background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, var(--bg-primary) 100%);
         }
 
@@ -96,18 +100,18 @@
         }
 
         .container {
-            max-width: 1200px;
-            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100%;
+            max-width: 100%;
+            margin: 0;
             backdrop-filter: blur(35px);
             -webkit-backdrop-filter: blur(35px);
-            border-radius: 20px;
-            box-shadow: var(--shadow-primary);
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
             overflow: hidden;
-            border: 1px solid var(--border-secondary);
-        }
-
-        .container:hover {
-            box-shadow: var(--shadow-hover);
         }
 
         .status-bar {
@@ -120,6 +124,7 @@
             padding: 20px 25px;
             border-bottom: 1px solid var(--border-primary);
             color: var(--text-primary);
+            flex-shrink: 0;
         }
 
         .status-left {
@@ -215,7 +220,6 @@
             box-shadow: none;
         }
 
-        /* 重载配置按钮样式修改 - 无背景，位于扫描按钮正左边，尺寸略小 */
         .reload-config-btn {
             background: none;
             border: none;
@@ -228,15 +232,14 @@
             align-items: center;
             justify-content: center;
             position: relative;
-            width: 36px;  /* 略小于扫描按钮高度 */
-            height: 36px; /* 略小于扫描按钮高度 */
+            width: 36px;
+            height: 36px;
         }
 
         .reload-config-btn:hover {
             background: rgba(255, 255, 255, 0.1);
         }
 
-        /* 齿轮图标样式 */
         .reload-config-btn svg {
             width: 20px;
             height: 20px;
@@ -244,12 +247,10 @@
             transition: transform 0.5s ease;
         }
 
-        /* 旋转动画 - 点击时旋转一圈 */
         .reload-config-btn.rotate svg {
             transform: rotate(360deg);
         }
 
-        /* 悬停提示 */
         .reload-config-btn::after {
             content: '重载配置';
             position: absolute;
@@ -272,52 +273,64 @@
             opacity: 1;
         }
 
-        /* 按钮容器 - 确保按钮水平排列 */
         .action-buttons {
             display: flex;
             align-items: center;
         }
 
+        /* 主内容区 */
         .content {
             display: flex;
-            min-height: 600px;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
         }
 
+        /* 左侧日历：独立滚动 */
         .sidebar {
             width: 320px;
             background: var(--bg-card);
             backdrop-filter: blur(30px);
             -webkit-backdrop-filter: blur(30px);
             border-right: 1px solid var(--border-primary);
-            padding: 0;
             display: flex;
             flex-direction: column;
             transition: transform 0.3s ease;
+            flex-shrink: 0;
+            overflow: hidden;
         }
 
         .calendar-section {
             flex: 1;
             padding: 20px;
             overflow-y: auto;
+            scrollbar-width: thin;
         }
 
         .month-section {
-            margin-bottom: 25px;
+            margin-bottom: 28px;
         }
 
         .month-title {
-            background: var(--bg-status);
-            color: var(--text-secondary);
-            padding: 12px;
             text-align: center;
-            border-radius: 10px;
-            margin-bottom: 12px;
             font-weight: 600;
-            font-size: 15px;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid var(--border-primary);
-            box-shadow: var(--shadow-month);
+            font-size: 18px;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            padding: 8px 0 6px 0;
+            background: transparent;
+            backdrop-filter: none;
+            border: none;
+            box-shadow: none;
+            line-height: 1.4;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .month-title br {
+            display: block;
+            content: "";
+            margin: 2px 0;
         }
 
         .dates-grid {
@@ -326,7 +339,6 @@
             gap: 6px;
         }
 
-        /* 日期项基础样式 */
         .date-item {
             aspect-ratio: 1;
             display: flex;
@@ -349,7 +361,6 @@
             color: var(--text-primary);
         }
 
-        /* 无作业日期和未来日期保持相同样式 */
         .date-item.no-work,
         .date-item.disabled {
             background: var(--bg-date-no-work);
@@ -363,19 +374,16 @@
             border-color: var(--border-date);
         }
 
-        /* 有作业的日期 - 基础样式，亮度将通过JavaScript动态设置 */
         .date-item.has-work {
             border-color: rgba(255, 255, 255, 0.15);
             color: rgba(255, 255, 255, 0.9);
             position: relative;
         }
 
-        /* 有作业日期的悬停状态 - 边框变蓝 */
         .date-item.has-work:hover {
             border-color: var(--border-date-hover);
         }
 
-        /* 活跃状态的有作业日期 - 使用蓝色背景和边框 */
         .date-item.has-work.active {
             background: var(--color-primary);
             border-color: var(--border-date-active);
@@ -384,7 +392,6 @@
             filter: none !important;
         }
 
-        /* 作业数量提示 */
         .date-item.has-work::after {
             content: attr(data-work-count);
             position: absolute;
@@ -409,18 +416,22 @@
 
         .works-list {
             flex: 1;
-            padding: 25px;
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
             background: var(--bg-list);
+            min-width: 0;
         }
 
         .works-header-container {
             display: flex;
             align-items: center;
             gap: 10px;
-            margin-bottom: 20px;
+            padding: 25px 25px 0 25px;
+            margin-bottom: 0;
             padding-bottom: 15px;
             border-bottom: 2px solid var(--color-accent);
+            flex-shrink: 0;
         }
 
         .works-header {
@@ -428,6 +439,12 @@
             font-weight: 600;
             color: var(--text-primary);
             flex: 1;
+        }
+
+        #worksContainer {
+            flex: 1;
+            overflow-y: auto;
+            padding: 25px 25px 25px 25px;
         }
 
         .works-grid {
@@ -454,7 +471,6 @@
             background: var(--bg-card-hover);
         }
 
-        /* 无URL作业卡片样式 */
         .work-card.no-url {
             opacity: 0.6;
             cursor: not-allowed;
@@ -467,13 +483,6 @@
             box-shadow: var(--shadow-card);
             border-color: var(--border-primary);
             background: var(--bg-card);
-        }
-
-        /* 无URL徽章样式 */
-        .no-url-badge {
-            background: rgba(255, 87, 34, 0.15);
-            border: 2px solid rgba(255, 87, 34, 0.3);
-            color: rgba(255, 87, 34, 0.9);
         }
 
         .work-header {
@@ -517,25 +526,11 @@
             margin-top: 4px;
         }
 
-        .work-time-info.blue {
-            color: var(--color-primary);
-        }
-
-        .work-time-info.yellow {
-            color: var(--color-warning);
-        }
-
-        .work-time-info.green {
-            color: var(--color-secondary);
-        }
-
-        .work-time-info.gray {
-            color: var(--text-disabled);
-        }
-
-        .work-time-info.red {
-            color: #ef4444;
-        }
+        .work-time-info.blue { color: var(--color-primary); }
+        .work-time-info.yellow { color: var(--color-warning); }
+        .work-time-info.green { color: var(--color-secondary); }
+        .work-time-info.gray { color: var(--text-disabled); }
+        .work-time-info.red { color: #ef4444; }
 
         .no-works {
             text-align: center;
@@ -560,7 +555,14 @@
             margin: 0 auto 15px;
         }
 
-        /* 遮罩层 */
+        /* 日历底部加载指示器 */
+        .calendar-loading-more {
+            text-align: center;
+            padding: 15px;
+            color: var(--color-primary);
+            font-size: 13px;
+        }
+
         .overlay {
             display: none;
             position: fixed;
@@ -580,6 +582,103 @@
             opacity: 1;
         }
 
+        .auth-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: min(420px, calc(100% - 40px));
+            transform: translate(-50%, -50%);
+            background: rgba(15, 23, 42, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+            border-radius: 18px;
+            padding: 24px;
+            z-index: 999;
+            display: none;
+            opacity: 0;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
+        .auth-modal.active {
+            display: block;
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        .auth-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .auth-modal-title {
+            font-size: 18px;
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .auth-modal-close {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 18px;
+        }
+
+        .auth-modal-body {
+            display: grid;
+            gap: 14px;
+        }
+
+        .auth-modal-body label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .auth-modal-body input,
+        .auth-modal-body button,
+        .auth-modal-body select {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .auth-modal-body button {
+            background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        .auth-modal-body button:hover {
+            transform: translateY(-1px);
+        }
+
+        .auth-modal-footnote {
+            color: var(--text-tertiary);
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .auth-modal-note {
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 13px;
+            color: var(--text-secondary);
+            white-space: pre-line;
+        }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
@@ -591,7 +690,6 @@
         }
 
         @media (max-width: 768px) {
-            /* 竖屏时日历切换按钮移至日期标题左侧 */
             .status-left .calendar-toggle {
                 display: none;
             }
@@ -635,8 +733,8 @@
         <div class="status-bar">
             <div class="status-left">
                 <button class="calendar-toggle" id="calendarToggle">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"> 
-                        <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/> 
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                        <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>
                     </svg>
                 </button>
                 <div class="status-info">
@@ -650,7 +748,6 @@
                     </div>
                 </div>
             </div>
-
             <div class="action-buttons">
                 <button class="reload-config-btn" id="reloadConfigBtn" onclick="reloadConfig()">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -665,9 +762,39 @@
 
         <div class="overlay" id="overlay"></div>
 
+        <div class="auth-modal" id="authModal">
+            <div class="auth-modal-header">
+                <div class="auth-modal-title">授权访问</div>
+                <button class="auth-modal-close" onclick="closeAuthModal()">×</button>
+            </div>
+            <div class="auth-modal-body">
+                <label>
+                    <span>令牌类型</span>
+                    <select id="authTypeSelect">
+                        <option value="temp">临时令牌 (15 分钟)</option>
+                        <option value="permanent">永久令牌</option>
+                    </select>
+                </label>
+                <button type="button" onclick="requestAuthCode()">获取验证码</button>
+                <label>
+                    <span>验证码 ID</span>
+                    <input id="authCodeId" readonly placeholder="点击获取验证码后显示" />
+                </label>
+                <label>
+                    <span>输入验证码</span>
+                    <input id="authCodeInput" placeholder="请输入控制台显示的验证码" />
+                </label>
+                <button type="button" onclick="verifyAuthCode()">确认授权</button>
+                <div class="auth-modal-note">
+                    获取验证码后，请查看服务器控制台中打印的验证码。
+                    验证成功后令牌将保存在浏览器 Cookie 中，后续操作会自动使用该令牌。
+                </div>
+            </div>
+        </div>
+
         <div class="content">
             <div class="sidebar" id="sidebar">
-                <div class="calendar-section">
+                <div class="calendar-section" id="calendarSection">
                     <div id="calendar"></div>
                 </div>
             </div>
@@ -675,8 +802,8 @@
             <div class="works-list">
                 <div class="works-header-container">
                     <button class="calendar-toggle" id="mobileCalendarToggle">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"> 
-                            <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/> 
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>
                         </svg>
                     </button>
                     <div class="works-header" id="worksHeader">选择日期查看作业</div>
@@ -696,44 +823,45 @@
         let calendarData = {};
         let subjectMap = {};
         let checkInterval = 3600;
-        let lastScanTimestamp = 0;      // 缓存的上次扫描时间（秒）
+        let lastScanTimestamp = 0;
         let scanInProgress = false;
         let totalWorks = 0;
-        let cachedWorks = [];            // 当前显示的作业数据
-        let isRefreshing = false;        // 防止重复刷新
-        let statusInterval = null;       // 定时器ID
+        let cachedWorks = [];
+        let isRefreshing = false;
+        let statusInterval = null;
+        let autoPolling = false;
+        let autoPollIntervalId = null;
+        const AUTH_COOKIE_NAME = 'auth_token';
+        let pendingAuthAction = null;
 
-        // 初始化
+        // 无限滚动相关
+        let loadedMonthsSet = new Set();      // 已加载的月份key (YYYYMM)
+        let isLoadingMore = false;
+        let initialMonthsCount = 4;            // 初始加载4个月
+        let loadMoreCount = 3;                 // 每次滚动加载3个月
+        let calendarScrollListener = null;
+
         document.addEventListener('DOMContentLoaded', async function() {
             await loadConfig();
-            await loadStatus();           // 获取初始状态
-            await loadCalendarData();
+            await loadStatus();
+            await initCalendar();               // 初始化无限滚动日历
             await loadWorksForToday();
-
             setupMobileEvents();
-            startTimers();                // 启动每秒定时器
-
-            // 监听窗口大小变化
+            startTimers();
             window.addEventListener('resize', function() {
-                const isMobile = window.innerWidth <= 768;
-                if (!isMobile) closeSidebar();
+                if (window.innerWidth > 768) closeSidebar();
             });
         });
 
-        // 加载科目配置
         async function loadConfig() {
             try {
                 const response = await fetch('/api/config');
                 const config = await response.json();
                 subjectMap = config.subject_config;
                 checkInterval = config.check_interval || 3600;
-                console.log('配置加载成功，检查间隔:', checkInterval, '秒');
-            } catch (error) {
-                console.error('加载配置失败:', error);
-            }
+            } catch (error) { console.error('加载配置失败:', error); }
         }
 
-        // 获取状态（仅初始化或刷新时调用）
         async function loadStatus() {
             try {
                 const response = await fetch('/api/status');
@@ -741,13 +869,115 @@
                 lastScanTimestamp = status.last_scan_time;
                 scanInProgress = status.scan_in_progress;
                 totalWorks = status.total_works;
-                updateStatusDisplay();   // 更新状态栏显示
+                updateStatusDisplay();
+            } catch (error) { console.error('获取状态失败:', error); }
+        }
+
+        function setCookie(name, value, maxAgeSeconds) {
+            document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSeconds}; samesite=lax`;
+        }
+
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
+            return null;
+        }
+
+        function deleteCookie(name) {
+            document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax`;
+        }
+
+        function getStoredAuthToken() {
+            return getCookie(AUTH_COOKIE_NAME);
+        }
+
+        function saveAuthToken(token, tokenType) {
+            const maxAge = tokenType === 'temp' ? 900 : 365 * 24 * 60 * 60;
+            setCookie(AUTH_COOKIE_NAME, token, maxAge);
+        }
+
+        function openAuthModal(actionName) {
+            pendingAuthAction = actionName || null;
+            document.getElementById('authModal').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+        }
+
+        function closeAuthModal() {
+            document.getElementById('authModal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+            document.getElementById('authCodeInput').value = '';
+            if (!pendingAuthAction) document.getElementById('authCodeId').value = '';
+        }
+
+        async function requestAuthCode() {
+            const type = document.getElementById('authTypeSelect').value;
+            try {
+                const response = await fetch(`/api/auth/code?type=${encodeURIComponent(type)}`);
+                const data = await response.json();
+                if (response.ok && data.code_id) {
+                    document.getElementById('authCodeId').value = data.code_id;
+                    alert('验证码已创建，请查看服务端控制台获取具体验证码。');
+                } else {
+                    alert(data.error || '获取验证码失败');
+                }
             } catch (error) {
-                console.error('获取状态失败:', error);
+                console.error(error);
+                alert('获取验证码失败');
             }
         }
 
-        // 更新状态栏显示（使用本地缓存）
+        async function verifyAuthCode() {
+            const codeId = document.getElementById('authCodeId').value;
+            const code = document.getElementById('authCodeInput').value.trim();
+            if (!codeId || !code) {
+                alert('请先获取验证码并输入验证码');
+                return;
+            }
+            try {
+                const response = await fetch('/api/auth/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code_id: codeId, code })
+                });
+                const data = await response.json();
+                if (response.ok && data.token) {
+                    saveAuthToken(data.token, data.type || 'temp');
+                    closeAuthModal();
+                    alert('授权成功，令牌已保存。');
+                    if (pendingAuthAction === 'scan') {
+                        pendingAuthAction = null;
+                        triggerScan();
+                    } else if (pendingAuthAction === 'reloadConfig') {
+                        pendingAuthAction = null;
+                        reloadConfig();
+                    }
+                } else {
+                    alert(data.error || '授权失败');
+                }
+            } catch (error) {
+                console.error(error);
+                alert('授权失败');
+            }
+        }
+
+        async function fetchWithAuth(url, options = {}) {
+            options.headers = options.headers || {};
+            const token = getStoredAuthToken();
+            if (!token) {
+                openAuthModal();
+                throw new Error('需要授权');
+            }
+            options.headers.Authorization = `Bearer ${token}`;
+            const response = await fetch(url, options);
+            if (response.status === 401) {
+                deleteCookie(AUTH_COOKIE_NAME);
+                openAuthModal();
+                throw new Error('授权失败');
+            }
+            return response;
+        }
+
         function updateStatusDisplay() {
             const scanStatusSpan = document.getElementById('scanStatus');
             if (scanInProgress) {
@@ -765,37 +995,50 @@
             document.getElementById('totalWorks').innerText = totalWorks;
         }
 
-        // 刷新数据（请求状态、日历、作业列表）
         async function refreshData() {
             if (isRefreshing) return;
             isRefreshing = true;
-            console.log('自动刷新数据...');
-            await loadStatus();                 // 更新状态缓存
-            await loadCalendarData();           // 刷新日历
-            if (currentDate) {
-                await loadWorks(currentDate);   // 刷新作业列表
-            } else {
-                await loadWorksForToday();
-            }
+            await loadStatus();
+            // 重置日历：清空缓存，重新加载初始月份
+            await resetAndReloadCalendar();
+            if (currentDate) await loadWorks(currentDate);
+            else await loadWorksForToday();
             isRefreshing = false;
         }
 
-        // 每秒定时器：更新状态栏显示、作业剩余时间，并检查是否需要自动刷新
+        function startAutoPolling() {
+            if (autoPolling) return;
+            autoPolling = true;
+            const initialLastScan = lastScanTimestamp;
+            autoPollIntervalId = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/status');
+                    const status = await response.json();
+                    if (!status.scan_in_progress && status.last_scan_time !== initialLastScan) {
+                        lastScanTimestamp = status.last_scan_time;
+                        scanInProgress = status.scan_in_progress;
+                        totalWorks = status.total_works;
+                        updateStatusDisplay();
+                        clearInterval(autoPollIntervalId);
+                        autoPolling = false;
+                        await refreshData();
+                    }
+                } catch (error) { console.error('自动轮询失败:', error); }
+            }, 15000);
+        }
+
         function startTimers() {
             if (statusInterval) clearInterval(statusInterval);
             statusInterval = setInterval(() => {
-                updateStatusDisplay();          // 基于缓存的 lastScanTimestamp 更新状态栏
-                updateTimeDisplay();            // 基于 cachedWorks 更新作业剩余时间
-
-                // 检查是否需要自动刷新数据（不触发扫描）
+                updateStatusDisplay();
+                updateTimeDisplay();
                 const now = Date.now() / 1000;
-                if (!scanInProgress && (now - lastScanTimestamp) > checkInterval) {
-                    refreshData();
+                if (!scanInProgress && !autoPolling && (now - lastScanTimestamp) > checkInterval) {
+                    startAutoPolling();
                 }
             }, 1000);
         }
 
-        // 更新所有作业卡片的剩余时间（本地计算，不请求后端）
         function updateTimeDisplay() {
             const cards = document.querySelectorAll('.work-card');
             if (!cards.length) return;
@@ -812,457 +1055,353 @@
                 }
             });
         }
+    // 重置日历状态，重新加载初始4个月
+    async function resetAndReloadCalendar() {
+        // 清空日历容器，重置集合
+        const calendarDiv = document.getElementById('calendar');
+        calendarDiv.innerHTML = '';
+        loadedMonthsSet.clear();
+        calendarData = {};
+        await loadInitialMonths();
+    }
 
-        // 加载日历数据（最近三个月）
-        async function loadCalendarData() {
-            try {
-                const months = [];
-                const today = new Date();
-                for (let i = 0; i < 3; i++) {
-                    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    months.push(`${year}${month}`);
-                }
-                const response = await fetch(`/api/calendar?months=${months.join(',')}`);
-                calendarData = await response.json();
-                generateCalendar();
-            } catch (error) {
-                console.error('加载日历数据失败:', error);
-                generateCalendar();
+    // 加载初始4个月 (当前月及之前3个月，共4个月)
+    async function loadInitialMonths() {
+        await fetchAndAppendMonths(initialMonthsCount);
+        // 滚动到顶部（当前月显示）
+        const section = document.getElementById('calendarSection');
+        if (section) section.scrollTop = 0;
+    }
+
+    // 加载更早的月份（向前加载）
+    async function loadEarlierMonths() {
+        await fetchAndAppendMonths(loadMoreCount);
+    }
+
+    // 请求月份数据并追加到日历末尾
+    async function fetchAndAppendMonths(monthsCount) {
+    if (monthsCount <= 0) return;
+    if (isLoadingMore) return;
+    isLoadingMore = true;
+
+    const monthKeys = [];
+
+    // 根据 loadedMonthsSet 是否为空决定加载方向
+    const isInitial = loadedMonthsSet.size === 0;
+
+    if (isInitial) {
+        // 初始加载：从当前月向前推 monthsCount 个月（从近到远）
+        const today = new Date();
+        for (let i = 0; i < monthsCount; i++) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const key = `${year}${month}`;
+            if (!loadedMonthsSet.has(key)) {
+                monthKeys.push(key);
             }
         }
+    } else {
+        // 滚动加载：基于已加载的最早月份，向前推 monthsCount 个月（从远到近）
+        const sortedLoaded = Array.from(loadedMonthsSet).sort();
+        const earliest = sortedLoaded[0];
+        const year = parseInt(earliest.slice(0, 4));
+        const month = parseInt(earliest.slice(4, 6));
+        const baseDate = new Date(year, month - 1, 1);
+        for (let i = monthsCount; i >= 1; i--) {
+            const prev = new Date(baseDate.getFullYear(), baseDate.getMonth() - i, 1);
+            const y = prev.getFullYear();
+            const m = String(prev.getMonth() + 1).padStart(2, '0');
+            const key = `${y}${m}`;
+            if (!loadedMonthsSet.has(key)) {
+                monthKeys.push(key);
+            }
+        }
+    }
 
-        // 加载今日作业
+    if (monthKeys.length === 0) {
+        isLoadingMore = false;
+        return;
+    }
+
+    const calendarDiv = document.getElementById('calendar');
+    let loadingIndicator = null;
+    // 仅滚动加载时显示动画
+    if (!isInitial) {
+        loadingIndicator = document.createElement('div');
+        loadingIndicator.className = 'calendar-loading-more';
+        loadingIndicator.innerHTML = '<div class="loading-spinner" style="width:20px;height:20px;"></div><div>加载更早作业...</div>';
+        calendarDiv.appendChild(loadingIndicator);
+        loadingIndicator.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    try {
+        const response = await fetch(`/api/calendar?months=${monthKeys.join(',')}`);
+        const newData = await response.json();
+        for (const [mk, val] of Object.entries(newData)) {
+            if (!calendarData[mk]) calendarData[mk] = {};
+            Object.assign(calendarData[mk], val);
+        }
+        for (const monthKey of monthKeys) {
+            if (loadedMonthsSet.has(monthKey)) continue;
+            const year = parseInt(monthKey.slice(0, 4));
+            const monthIdx = parseInt(monthKey.slice(4, 6)) - 1;
+            const monthDate = new Date(year, monthIdx, 1);
+            const monthSection = createMonthSection(monthDate);
+            calendarDiv.appendChild(monthSection);
+            loadedMonthsSet.add(monthKey);
+        }
+    } catch (error) {
+        console.error('加载月份数据失败:', error);
+    } finally {
+        if (loadingIndicator && loadingIndicator.parentNode) loadingIndicator.remove();
+        isLoadingMore = false;
+    }
+}
+
+    // 初始化日历: 设置滚动监听，加载初始月份
+    async function initCalendar() {
+        // 先清空
+        const calendarDiv = document.getElementById('calendar');
+        calendarDiv.innerHTML = '';
+        loadedMonthsSet.clear();
+        calendarData = {};
+        await loadInitialMonths();
+        // 监听滚动到底部
+        if (calendarScrollListener) {
+            document.getElementById('calendarSection')?.removeEventListener('scroll', calendarScrollListener);
+        }
+        const scrollContainer = document.getElementById('calendarSection');
+        calendarScrollListener = () => {
+            if (!scrollContainer) return;
+            const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+            // 距离底部小于80px时触发加载
+            if (scrollHeight - scrollTop - clientHeight < 80 && !isLoadingMore) {
+                loadEarlierMonths();
+            }
+        };
+        scrollContainer.addEventListener('scroll', calendarScrollListener);
+    }
+
+    // 生成单个月份区域
+    function createMonthSection(date) {
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
+        const section = document.createElement('div');
+        section.className = 'month-section';
+        const title = document.createElement('div');
+        title.className = 'month-title';
+        // 样式: xxxx年 xx月 + 换行 + 长横线
+        title.innerHTML = `${year}年 ${monthNames[month]}`;
+        section.appendChild(title);
+        const grid = document.createElement('div');
+        grid.className = 'dates-grid';
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const daysInMonth = lastDay.getDate();
+        const today = new Date();
+        const todayYear = today.getFullYear(), todayMonth = today.getMonth(), todayDate = today.getDate();
+        const firstDayOfWeek = firstDay.getDay() || 7;
+        for (let i = 1; i < firstDayOfWeek; i++) {
+            const empty = document.createElement('div');
+            empty.className = 'date-item disabled';
+            empty.style.visibility = 'hidden';
+            grid.appendChild(empty);
+        }
+        const monthKey = `${year}${String(month+1).padStart(2,'0')}`;
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dateItem = document.createElement('div');
+            dateItem.className = 'date-item';
+            dateItem.textContent = day;
+            const isFuture = (year > todayYear) || (year === todayYear && month > todayMonth) || (year === todayYear && month === todayMonth && day > todayDate);
+            const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            const workCount = calendarData[monthKey]?.[dateStr] || 0;
+            if (isFuture) {
+                dateItem.classList.add('disabled');
+            } else if (workCount > 0) {
+                dateItem.classList.add('has-work');
+                dateItem.setAttribute('data-work-count', `${workCount}个作业`);
+                dateItem.addEventListener('click', (e) => selectDate(e, year, month, day));
+                const brightness = Math.min(0.9 + (workCount-1)*0.08, 1.3);
+                dateItem.style.filter = `brightness(${brightness})`;
+            } else {
+                dateItem.classList.add('no-work');
+            }
+            if (year === todayYear && month === todayMonth && day === todayDate) {
+                dateItem.classList.add('active');
+                if (!isFuture && workCount > 0) currentDate = dateStr;
+            }
+            grid.appendChild(dateItem);
+        }
+        section.appendChild(grid);
+        return section;
+    }
+
+    function selectDate(event, year, month, day) {
+        document.querySelectorAll('.date-item.active').forEach(item => {
+            item.classList.remove('active');
+            if (item.classList.contains('has-work')) {
+                const cnt = parseInt(item.getAttribute('data-work-count')||'1');
+                const b = Math.min(0.9+(cnt-1)*0.08, 1.3);
+                item.style.filter = `brightness(${b})`;
+            }
+        });
+        let target = event.target;
+        while (target && !target.classList.contains('date-item')) target = target.parentElement;
+        if (target && target.classList.contains('date-item')) {
+            target.classList.add('active');
+            target.style.filter = 'none';
+            currentDate = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            loadWorks(currentDate);
+            if (window.innerWidth <= 768) setTimeout(closeSidebar, 80);
+        }
+    }
+
         async function loadWorksForToday() {
             const today = new Date();
             const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
             await loadWorks(todayStr);
         }
 
-        // 加载指定日期的作业
         async function loadWorks(date) {
             try {
                 const worksContainer = document.getElementById('worksContainer');
                 const worksHeader = document.getElementById('worksHeader');
                 worksHeader.textContent = `${date} 的作业`;
-                worksContainer.innerHTML = `
-                    <div class="loading">
-                        <div class="loading-spinner"></div>
-                        <div>加载中...</div>
-                    </div>
-                `;
-
+                worksContainer.innerHTML = `<div class="loading"><div class="loading-spinner"></div><div>加载中...</div></div>`;
                 const response = await fetch(`/api/works?date=${date}`);
                 const works = await response.json();
                 cachedWorks = works;
                 displayWorks(works);
             } catch (error) {
-                console.error('加载作业失败:', error);
-                document.getElementById('worksContainer').innerHTML = `
-                    <div class="no-works">
-                        <div>加载失败，请重试</div>
-                    </div>
-                `;
+                document.getElementById('worksContainer').innerHTML = `<div class="no-works"><div>加载失败，请重试</div></div>`;
             }
         }
 
-        // 显示作业列表
         function displayWorks(works) {
             const worksContainer = document.getElementById('worksContainer');
-            if (!worksContainer) return;
-
             if (!works || works.length === 0) {
-                worksContainer.innerHTML = `
-                    <div class="no-works">
-                        <div>该日期没有作业</div>
-                    </div>
-                `;
+                worksContainer.innerHTML = `<div class="no-works"><div>该日期没有作业</div></div>`;
                 return;
             }
-
-            worksContainer.innerHTML = `
-                <div class="works-grid">
-                    ${works.map(work => {
-                        const hasContent = work.has_content !== undefined ? work.has_content : true;
-                        const isNoUrl = !hasContent;
-                        const subjectInfo = subjectMap[work.subject_id] || subjectMap['default'] || { name: '未知', color: '#A0A0A0', short: '未' };
-                        const subjectColor = subjectInfo.color;
-                        const rgbColor = hexToRgb(subjectColor);
-                        const bgColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.15)`;
-                        const borderColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.3)`;
-                        const textColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.9)`;
-
-                        const { timeHtml, timeClass } = formatTimeDisplay(work);
-
-                        return `
-                            <div class="work-card ${isNoUrl ? 'no-url' : ''}" 
-                                data-work-id="${work.work_id}"
-                                ${!isNoUrl ? `onclick="openWork('${work.work_id}')"` : ''}
-                                style="--subject-r: ${rgbColor.r};
-                                    --subject-g: ${rgbColor.g};
-                                    --subject-b: ${rgbColor.b};">
-                                <div class="work-header">
-                                    <div class="subject-badge" 
-                                        style="background: ${bgColor};
-                                                border: 3px solid ${borderColor};
-                                                color: ${textColor};">
-                                        ${escapeHtml(subjectInfo.short)}
-                                    </div>
-                                    <div class="work-title">
-                                        <div class="work-name">${escapeHtml(work.work_name)}</div>
-                                        <div class="work-meta">
-                                            ${escapeHtml(subjectInfo.name)}
-                                        </div>
-                                        <div class="work-time-info ${timeClass}">${timeHtml}</div>
-                                    </div>
+            worksContainer.innerHTML = `<div class="works-grid">${works.map(work => {
+                const hasContent = work.has_content !== undefined ? work.has_content : true;
+                const isNoUrl = !hasContent;
+                const subjectInfo = subjectMap[work.subject_id] || subjectMap['default'] || { name: '未知', color: '#A0A0A0', short: '未' };
+                const rgbColor = hexToRgb(subjectInfo.color);
+                const bgColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.15)`;
+                const borderColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.3)`;
+                const textColor = `rgba(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b}, 0.9)`;
+                const { timeHtml, timeClass } = formatTimeDisplay(work);
+                return `<div class="work-card ${isNoUrl ? 'no-url' : ''}" data-work-id="${work.work_id}" ${!isNoUrl ? `onclick="openWork('${work.work_id}')"` : ''} style="--subject-r: ${rgbColor.r}; --subject-g: ${rgbColor.g}; --subject-b: ${rgbColor.b};">
+                            <div class="work-header">
+                                <div class="subject-badge" style="background: ${bgColor}; border: 3px solid ${borderColor}; color: ${textColor};">${escapeHtml(subjectInfo.short)}</div>
+                                <div class="work-title">
+                                    <div class="work-name">${escapeHtml(work.work_name)}</div>
+                                    <div class="work-meta">${escapeHtml(subjectInfo.name)}</div>
+                                    <div class="work-time-info ${timeClass}">${timeHtml}</div>
                                 </div>
                             </div>
-                        `;
-                    }).join('')}
-                </div>
-            `;
+                        </div>`;
+            }).join('')}</div>`;
         }
 
-        // 格式化时间显示（作业剩余时间）
         function formatTimeDisplay(work) {
             const now = Date.now();
-            let timeHtml = '';
-            let timeClass = 'blue';
-            
+            let timeHtml = '', timeClass = 'blue';
             if (work.is_exam) {
-                const startTime = work.start_time;
-                const endTime = work.upto_time;
-                
+                const startTime = work.start_time, endTime = work.upto_time;
                 if (now < startTime) {
                     const diff = startTime - now;
-                    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-                    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                    
-                    if (days > 0) {
-                        timeHtml = `距离开始: ${days}天${hours}小时`;
-                        timeClass = 'green';
-                    } else if (hours > 0) {
-                        timeHtml = `距离开始: ${hours}小时${minutes}分钟`;
-                        timeClass = 'green';
-                    } else if (minutes > 0) {
-                        timeHtml = `距离开始: ${minutes}分钟`;
-                        timeClass = 'yellow';
-                    } else {
-                        timeHtml = '即将开始';
-                        timeClass = 'yellow';
-                    }
+                    const days = Math.floor(diff / (1000*60*60*24)), hours = Math.floor((diff % (86400000)) / 3600000), minutes = Math.floor((diff % 3600000) / 60000);
+                    if (days > 0) { timeHtml = `距离开始: ${days}天${hours}小时`; timeClass = 'green'; }
+                    else if (hours > 0) { timeHtml = `距离开始: ${hours}小时${minutes}分钟`; timeClass = 'green'; }
+                    else if (minutes > 0) { timeHtml = `距离开始: ${minutes}分钟`; timeClass = 'yellow'; }
+                    else { timeHtml = '即将开始'; timeClass = 'yellow'; }
                 } else if (now < endTime) {
-                    const diff = endTime - now;
-                    const hours = Math.floor(diff / (1000 * 60 * 60));
-                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-                    
-                    if (hours > 0) {
-                        timeHtml = `距离结束: ${hours}小时${minutes}分钟`;
-                        timeClass = 'yellow';
-                    } else if (minutes > 0) {
-                        timeHtml = `距离结束: ${minutes}分钟${seconds}秒`;
-                        timeClass = 'red';
-                    } else if (seconds > 0) {
-                        timeHtml = `距离结束: ${seconds}秒`;
-                        timeClass = 'red';
-                    } else {
-                        timeHtml = '即将结束';
-                        timeClass = 'red';
-                    }
-                } else {
-                    timeHtml = '已结束';
-                    timeClass = 'gray';
-                }
+                    const diff = endTime - now, hours = Math.floor(diff / 3600000), minutes = Math.floor((diff % 3600000) / 60000), seconds = Math.floor((diff % 60000) / 1000);
+                    if (hours > 0) { timeHtml = `距离结束: ${hours}小时${minutes}分钟`; timeClass = 'yellow'; }
+                    else if (minutes > 0) { timeHtml = `距离结束: ${minutes}分钟${seconds}秒`; timeClass = 'red'; }
+                    else if (seconds > 0) { timeHtml = `距离结束: ${seconds}秒`; timeClass = 'red'; }
+                    else { timeHtml = '即将结束'; timeClass = 'red'; }
+                } else { timeHtml = '已结束'; timeClass = 'gray'; }
             } else {
-                const uptoTime = parseInt(work.upto_time);
-                const timeDiff = uptoTime - now;
-                const twoHours = 2 * 60 * 60 * 1000;
-                
-                if (timeDiff < 0) {
-                    timeHtml = '已截止';
-                    timeClass = 'gray';
-                } else if (timeDiff < twoHours) {
-                    const minutes = Math.floor(timeDiff / (1000 * 60));
-                    const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
-                    if (minutes > 0) {
-                        timeHtml = `距离截止: ${minutes}分钟`;
-                    } else {
-                        timeHtml = `距离截止: ${seconds}秒`;
-                    }
+                const uptoTime = parseInt(work.upto_time), timeDiff = uptoTime - now, twoHours = 7200000;
+                if (timeDiff < 0) { timeHtml = '已截止'; timeClass = 'gray'; }
+                else if (timeDiff < twoHours) {
+                    const minutes = Math.floor(timeDiff / 60000), seconds = Math.floor((timeDiff % 60000) / 1000);
+                    timeHtml = minutes > 0 ? `距离截止: ${minutes}分钟` : `距离截止: ${seconds}秒`;
                     timeClass = 'red';
                 } else {
-                    const hours = Math.floor(timeDiff / (1000 * 60 * 60));
-                    const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
-                    if (hours > 24) {
-                        const days = Math.floor(hours / 24);
-                        timeHtml = `距离截止: ${days}天${hours % 24}小时`;
-                    } else {
-                        timeHtml = `距离截止: ${hours}小时${minutes}分钟`;
-                    }
+                    const hours = Math.floor(timeDiff / 3600000), minutes = Math.floor((timeDiff % 3600000) / 60000);
+                    if (hours > 24) { const days = Math.floor(hours / 24); timeHtml = `距离截止: ${days}天${hours % 24}小时`; }
+                    else { timeHtml = `距离截止: ${hours}小时${minutes}分钟`; }
                     timeClass = 'blue';
                 }
             }
-            
             return { timeHtml, timeClass };
         }
 
-        // 十六进制颜色转RGB
-        function hexToRgb(hex) {
-            const rHex = hex.slice(1, 3);
-            const gHex = hex.slice(3, 5);
-            const bHex = hex.slice(5, 7);
-            return {
-                r: parseInt(rHex, 16),
-                g: parseInt(gHex, 16),
-                b: parseInt(bHex, 16)
-            };
-        }
 
-        // 打开作业详情
-        function openWork(workId) {
-            window.open(`/work/${workId}`, '_blank');
-        }
+        function hexToRgb(hex) { return { r: parseInt(hex.slice(1,3),16), g: parseInt(hex.slice(3,5),16), b: parseInt(hex.slice(5,7),16) }; }
+        function openWork(workId) { window.open(`/work/${workId}`, '_blank'); }
 
-        // 触发扫描
         async function triggerScan() {
+            pendingAuthAction = 'scan';
             const scanBtn = document.getElementById('scanBtn');
-            scanBtn.disabled = true;
-            scanBtn.innerHTML = '<span>扫描中...</span>';
-
+            scanBtn.disabled = true; scanBtn.innerHTML = '<span>扫描中...</span>';
             try {
-                const response = await fetch('/api/scan', { method: 'POST' });
+                const response = await fetchWithAuth('/api/scan', { method: 'POST' });
                 const result = await response.json();
-
-                if (result.status === 'success') {
-                    // 轮询扫描状态直到完成
-                    pollScanStatus();
-                } else {
-                    alert(result.message);
-                    resetScanButton();
-                }
+                if (result.status === 'success') pollManualScan();
+                else alert(result.message);
             } catch (error) {
-                console.error('触发扫描失败:', error);
-                resetScanButton();
-            }
+                if (error.message !== '需要授权' && error.message !== '授权失败') console.error(error);
+            } finally { resetScanButton(); }
         }
 
-        // 轮询扫描状态
-        function pollScanStatus() {
-            const checkStatus = setInterval(async () => {
-                try {
-                    const status = await fetch('/api/status').then(res => res.json());
-                    if (!status.scan_in_progress) {
-                        clearInterval(checkStatus);
-                        resetScanButton();
-                        // 扫描完成，刷新数据
-                        await refreshData();
-                    }
-                } catch (error) {
-                    console.error('状态检查失败:', error);
+    function pollManualScan() {
+        const checkStatus = setInterval(async () => {
+            try {
+                const status = await fetch('/api/status').then(res => res.json());
+                if (!status.scan_in_progress) {
                     clearInterval(checkStatus);
-                    resetScanButton();
+                    lastScanTimestamp = status.last_scan_time; scanInProgress = false; totalWorks = status.total_works;
+                    updateStatusDisplay(); await refreshData(); resetScanButton();
                 }
-            }, 1000);
-        }
+            } catch (error) { clearInterval(checkStatus); resetScanButton(); }
+        }, 1000);
+    }
 
-        // 重置扫描按钮
-        function resetScanButton() {
-            const scanBtn = document.getElementById('scanBtn');
-            scanBtn.disabled = false;
-            scanBtn.innerHTML = '<span>立即扫描</span>';
-        }
+    function resetScanButton() { const btn = document.getElementById('scanBtn'); btn.disabled = false; btn.innerHTML = '<span>立即扫描</span>'; }
 
-        // 重载配置
-        async function reloadConfig() {
-            const reloadBtn = document.getElementById('reloadConfigBtn');
-            reloadBtn.classList.add('rotate');
+    async function reloadConfig() {
+        pendingAuthAction = 'reloadConfig';
+        const btn = document.getElementById('reloadConfigBtn'); btn.classList.add('rotate');
+        try {
+            const res = await fetchWithAuth('/api/config/reload', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'success') { await loadConfig(); await refreshData(); }
+            else alert('重载配置失败');
+        } catch (error) {
+            if (error.message !== '需要授权' && error.message !== '授权失败') alert('重载配置失败');
+        } finally { setTimeout(() => btn.classList.remove('rotate'), 500); }
+    }
 
-            try {
-                const response = await fetch('/api/config/reload', { method: 'POST' });
-                const result = await response.json();
+    function escapeHtml(text) { if (!text) return ''; return text.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
 
-                if (result.status === 'success') {
-                    await loadConfig();
-                    await refreshData();   // 刷新所有数据
-                    setTimeout(() => {
-                        reloadBtn.classList.remove('rotate');
-                    }, 500);
-                } else {
-                    alert('重载配置失败');
-                    setTimeout(() => {
-                        reloadBtn.classList.remove('rotate');
-                    }, 500);
-                }
-            } catch (error) {
-                console.error('重载配置失败:', error);
-                alert('重载配置失败');
-                setTimeout(() => {
-                    reloadBtn.classList.remove('rotate');
-                }, 500);
-            }
-        }
-
-        // 简单 HTML 转义
-        function escapeHtml(text) {
-            if (!text) return '';
-            return text.replace(/[&<>]/g, function(m) {
-                if (m === '&') return '&amp;';
-                if (m === '<') return '&lt;';
-                if (m === '>') return '&gt;';
-                return m;
-            });
-        }
-
-        // ----------------- 日历生成 -----------------
-        function generateCalendar() {
-            const calendar = document.getElementById('calendar');
-            calendar.innerHTML = '';
-            for (let i = 0; i < 3; i++) {
-                const date = new Date();
-                date.setMonth(date.getMonth() - i);
-                const monthSection = createMonthSection(date);
-                calendar.appendChild(monthSection);
-            }
-        }
-
-        function createMonthSection(date) {
-            const year = date.getFullYear();
-            const month = date.getMonth();
-            const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', 
-                              '七月', '八月', '九月', '十月', '十一月', '十二月'];
-
-            const section = document.createElement('div');
-            section.className = 'month-section';
-
-            const title = document.createElement('div');
-            title.className = 'month-title';
-            title.textContent = `${year}年 ${monthNames[month]}`;
-            section.appendChild(title);
-
-            const grid = document.createElement('div');
-            grid.className = 'dates-grid';
-
-            const firstDay = new Date(year, month, 1);
-            const lastDay = new Date(year, month + 1, 0);
-            const daysInMonth = lastDay.getDate();
-
-            const today = new Date();
-            const todayYear = today.getFullYear();
-            const todayMonth = today.getMonth();
-            const todayDate = today.getDate();
-
-            const firstDayOfWeek = firstDay.getDay() || 7;
-            for (let i = 1; i < firstDayOfWeek; i++) {
-                const emptyItem = document.createElement('div');
-                emptyItem.className = 'date-item disabled';
-                emptyItem.style.visibility = 'hidden';
-                grid.appendChild(emptyItem);
-            }
-
-            for (let day = 1; day <= daysInMonth; day++) {
-                const dateItem = document.createElement('div');
-                dateItem.className = 'date-item';
-                dateItem.textContent = day;
-
-                const isFutureDate = 
-                    (year > todayYear) ||
-                    (year === todayYear && month > todayMonth) ||
-                    (year === todayYear && month === todayMonth && day > todayDate);
-
-                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const monthKey = `${year}${String(month + 1).padStart(2, '0')}`;
-                const workCount = calendarData[monthKey]?.[dateStr] || 0;
-
-                if (isFutureDate) {
-                    dateItem.classList.add('disabled');
-                } else if (workCount > 0) {
-                    dateItem.classList.add('has-work');
-                    dateItem.setAttribute('data-work-count', `${workCount}个作业`);
-                    dateItem.addEventListener('click', function(e) {
-                        selectDate.call(this, e, year, month, day);
-                    });
-
-                    const minBrightness = 0.9;
-                    const maxBrightness = 1.3;
-                    const brightnessStep = (maxBrightness - minBrightness) / 5;
-                    const brightness = Math.min(minBrightness + (workCount - 1) * brightnessStep, maxBrightness);
-                    dateItem.style.filter = `brightness(${brightness})`;
-                } else {
-                    dateItem.classList.add('no-work');
-                }
-
-                if (year === todayYear && month === todayMonth && day === todayDate) {
-                    dateItem.classList.add('active');
-                    if (!isFutureDate && workCount > 0) {
-                        currentDate = dateStr;
-                    }
-                }
-
-                grid.appendChild(dateItem);
-            }
-
-            section.appendChild(grid);
-            return section;
-        }
-
-        function selectDate(event, year, month, day) {
-            document.querySelectorAll('.date-item.active').forEach(item => {
-                item.classList.remove('active');
-                if (item.classList.contains('has-work')) {
-                    const workCount = parseInt(item.getAttribute('data-work-count') || '1');
-                    const minBrightness = 0.9;
-                    const maxBrightness = 1.3;
-                    const brightnessStep = (maxBrightness - minBrightness) / 5;
-                    const brightness = Math.min(minBrightness + (workCount - 1) * brightnessStep, maxBrightness);
-                    item.style.filter = `brightness(${brightness})`;
-                }
-            });
-
-            let targetElement = event.target;
-            while (targetElement && !targetElement.classList.contains('date-item')) {
-                targetElement = targetElement.parentElement;
-            }
-
-            if (targetElement && targetElement.classList.contains('date-item')) {
-                targetElement.classList.add('active');
-                targetElement.style.filter = 'none';
-                currentDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                loadWorks(currentDate);
-            }
-        }
-
-        // ----------------- 移动端侧边栏 -----------------
-        function setupMobileEvents() {
-            const calendarToggle = document.getElementById('calendarToggle');
-            const mobileCalendarToggle = document.getElementById('mobileCalendarToggle');
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.getElementById('overlay');
-
-            const openSidebar = () => {
-                sidebar.classList.add('active');
-                overlay.classList.add('active');
-                if (window.innerWidth <= 768) document.body.classList.add('sidebar-open');
-            };
-            const closeSidebar = () => {
-                sidebar.classList.remove('active');
-                overlay.classList.remove('active');
-                document.body.classList.remove('sidebar-open');
-            };
-
-            calendarToggle.addEventListener('click', openSidebar);
-            mobileCalendarToggle.addEventListener('click', openSidebar);
-            overlay.addEventListener('click', closeSidebar);
-            document.addEventListener('click', (e) => {
-                if (e.target.classList.contains('date-item') && !e.target.classList.contains('disabled') && !e.target.classList.contains('no-work') && window.innerWidth <= 768) {
-                    setTimeout(closeSidebar, 80);
-                }
-            });
-            window.addEventListener('resize', () => {
-                if (window.innerWidth > 768) closeSidebar();
-            });
-        }
-    </script>
+    function setupMobileEvents() {
+        const open = () => { sidebar.classList.add('active'); overlay.classList.add('active'); if(window.innerWidth<=768) document.body.classList.add('sidebar-open'); };
+        const closeSidebarFn = () => { sidebar.classList.remove('active'); overlay.classList.remove('active'); document.body.classList.remove('sidebar-open'); };
+        const closeAuthFn = () => { if (document.getElementById('authModal').classList.contains('active')) closeAuthModal(); else closeSidebarFn(); };
+        const sidebar = document.getElementById('sidebar'), overlay = document.getElementById('overlay');
+        document.getElementById('calendarToggle')?.addEventListener('click', open);
+        document.getElementById('mobileCalendarToggle')?.addEventListener('click', open);
+        overlay?.addEventListener('click', closeAuthFn);
+        window.closeSidebar = closeSidebarFn;
+    }
+    function closeSidebar() { if(window.innerWidth<=768) document.getElementById('sidebar')?.classList.remove('active'); document.getElementById('overlay')?.classList.remove('active'); document.body.classList.remove('sidebar-open'); }
+</script>
 </body>
+</html>

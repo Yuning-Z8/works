@@ -14,9 +14,11 @@ import threading
 import html
 import sqlite3
 import atexit
+import uuid
+import secrets
 from datetime import datetime, timedelta
 from typing import Any, Dict, Set, List, Tuple, Optional
-from flask import Flask, render_template, jsonify, request, send_from_directory
+from flask import Flask, render_template, jsonify, request, send_from_directory, g
 
 
 # ============================================================================
@@ -306,6 +308,19 @@ class DataManager:
             idle_timeout=600,
             check_interval=60
         )
+        self._init_tables()
+
+    def _init_tables(self):
+        """初始化数据库表"""
+        with self.pool.connection() as conn:
+            # 创建永久令牌表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS permanent_tokens (
+                    token TEXT PRIMARY KEY,
+                    created_at REAL NOT NULL
+                )
+            """)
+            conn.commit()
 
     # -------------------- 元数据批量操作 --------------------
     def batch_upsert_works_info(self, works_list: List[Dict[str, Any]]) -> None:
@@ -469,6 +484,29 @@ class DataManager:
         except Exception as e:
             print(f"保存作业详情失败 {work_id}: {e}")
             return False
+
+    # -------------------- 鉴权令牌管理 --------------------
+    def load_permanent_tokens(self) -> Dict[str, Dict]:
+        """加载所有永久令牌"""
+        with self.pool.connection() as conn:
+            cursor = conn.execute("SELECT token, created_at FROM permanent_tokens")
+            tokens = {}
+            for row in cursor.fetchall():
+                tokens[row['token']] = {'type': 'permanent', 'expire': None, 'created_at': row['created_at']}
+            return tokens
+
+    def save_permanent_token(self, token: str) -> None:
+        """保存永久令牌"""
+        with self.pool.connection() as conn:
+            conn.execute("INSERT INTO permanent_tokens (token, created_at) VALUES (?, ?)",
+                         (token, time.time()))
+            conn.commit()
+
+    def delete_permanent_token(self, token: str) -> None:
+        """删除永久令牌（可选，用于撤销）"""
+        with self.pool.connection() as conn:
+            conn.execute("DELETE FROM permanent_tokens WHERE token = ?", (token,))
+            conn.commit()
 
     def close(self):
         self.pool.close_all()
@@ -838,9 +876,150 @@ class WebService:
         self.data_manager = data_manager
         self.app = Flask(__name__)
         self.app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+        # 鉴权存储
+        self._auth_lock = threading.RLock()
+        self._verification_codes = {}   # code_id -> {'code': str, 'type': str, 'expire': float}
+        self._tokens = {}               # token -> {'type': str, 'expire': float (None for permanent)}
+
+        # 加载永久令牌
+        self._tokens.update(self.data_manager.load_permanent_tokens())
+
         self._setup_routes()
 
+    def _generate_verification_code(self) -> str:
+        """生成6位数字字母验证码"""
+        return secrets.token_hex(3).upper()
+
+    def _clean_expired(self):
+        """清理过期的验证码和临时令牌"""
+        now = time.time()
+        with self._auth_lock:
+            # 清理验证码
+            expired_codes = [cid for cid, data in self._verification_codes.items()
+                             if data['expire'] < now]
+            for cid in expired_codes:
+                del self._verification_codes[cid]
+
+            # 清理临时令牌
+            expired_tokens = [token for token, data in self._tokens.items()
+                              if data.get('expire') is not None and data['expire'] < now]
+            for token in expired_tokens:
+                del self._tokens[token]
+
+        if expired_codes or expired_tokens:
+            print(f"{Logger.Colors.WARNING}[AUTH] 清理过期项：验证码 {len(expired_codes)} 个，临时令牌 {len(expired_tokens)} 个{Logger.Colors.RESET}")
+
+    def _require_auth(self, f):
+        """鉴权装饰器"""
+        from functools import wraps
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                print(f"{Logger.Colors.ERROR}[AUTH] 缺少认证头，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                return jsonify({'error': '缺少认证头'}), 401
+
+            parts = auth_header.split()
+            if len(parts) != 2 or parts[0].lower() != 'bearer':
+                print(f"{Logger.Colors.ERROR}[AUTH] 认证头格式错误，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                return jsonify({'error': '认证头格式错误，应使用 Bearer <token>'}), 401
+
+            token = parts[1]
+            with self._auth_lock:
+                token_data = self._tokens.get(token)
+                if not token_data:
+                    print(f"{Logger.Colors.ERROR}[AUTH] 无效令牌，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                    return jsonify({'error': '无效的令牌'}), 401
+
+                # 检查临时令牌是否过期
+                expire = token_data.get('expire')
+                if expire is not None and expire < time.time():
+                    del self._tokens[token]
+                    print(f"{Logger.Colors.WARNING}[AUTH] 令牌已过期，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                    return jsonify({'error': '令牌已过期'}), 401
+
+                # 可选：记录令牌类型到请求上下文
+                g.auth_token_type = token_data['type']
+
+            print(f"{Logger.Colors.SUCCESS}[AUTH] 鉴权成功，令牌类型: {token_data['type']}，IP: {request.remote_addr}{Logger.Colors.RESET}")
+            return f(*args, **kwargs)
+        return decorated_function
+
     def _setup_routes(self):
+        # -------------------- 鉴权API --------------------
+        @self.app.route('/api/auth/code', methods=['GET'])
+        def get_auth_code():
+            """获取验证码（2分钟有效）"""
+            code_type = request.args.get('type', 'temp')
+            if code_type not in ('temp', 'permanent'):
+                print(f"{Logger.Colors.ERROR}[AUTH] 无效的验证码类型: {code_type}，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                return jsonify({'error': '类型必须是 temp 或 permanent'}), 400
+
+            code = self._generate_verification_code()
+            code_id = str(uuid.uuid4())
+            expire = time.time() + 120  # 2分钟
+
+            with self._auth_lock:
+                self._verification_codes[code_id] = {
+                    'code': code,
+                    'type': code_type,
+                    'expire': expire
+                }
+
+            # 控制台打印验证码和类型
+            type_desc = "临时" if code_type == 'temp' else "永久"
+            print(f"\n{Logger.Colors.BOLD}{Logger.Colors.INFO}[AUTH] 验证码已生成: {type_desc} {code} (code_id: {code_id}){Logger.Colors.RESET}\n")
+            print(f"{Logger.Colors.INFO}[AUTH] 验证码请求，类型: {code_type}，IP: {request.remote_addr}{Logger.Colors.RESET}")
+
+            return jsonify({'code_id': code_id, 'expires_in': 120})
+
+        @self.app.route('/api/auth/verify', methods=['POST'])
+        def verify_code():
+            """验证验证码并返回令牌"""
+            data = request.get_json()
+            if not data:
+                print(f"{Logger.Colors.ERROR}[AUTH] 缺少JSON数据，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                return jsonify({'error': '需要JSON数据'}), 400
+
+            code_id = data.get('code_id')
+            code_str = data.get('code')
+            if not code_id or not code_str:
+                print(f"{Logger.Colors.ERROR}[AUTH] 缺少code_id或code，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                return jsonify({'error': '缺少 code_id 或 code'}), 400
+
+            with self._auth_lock:
+                self._clean_expired()
+                stored = self._verification_codes.get(code_id)
+                if not stored:
+                    print(f"{Logger.Colors.WARNING}[AUTH] 无效code_id: {code_id}，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                    return jsonify({'error': '无效的 code_id'}), 400
+
+                if stored['code'] != code_str:
+                    print(f"{Logger.Colors.WARNING}[AUTH] 验证码错误，code_id: {code_id}，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                    return jsonify({'error': '验证码错误'}), 400
+
+                # 验证通过，生成令牌
+                token_type = stored['type']
+                token = secrets.token_urlsafe(32)
+
+                if token_type == 'temp':
+                    # 临时令牌，有效期15分钟
+                    expire = time.time() + 900
+                    self._tokens[token] = {'type': 'temp', 'expire': expire}
+                    print(f"{Logger.Colors.SUCCESS}[AUTH] 临时令牌生成，IP: {request.remote_addr}{Logger.Colors.RESET}")
+                else:
+                    # 永久令牌，永不过期，保存到数据库
+                    self._tokens[token] = {'type': 'permanent', 'expire': None}
+                    self.data_manager.save_permanent_token(token)
+                    print(f"{Logger.Colors.SUCCESS}[AUTH] 永久令牌生成并保存到数据库，IP: {request.remote_addr}{Logger.Colors.RESET}")
+
+                # 删除已使用的验证码
+                del self._verification_codes[code_id]
+
+            return jsonify({'token': token, 'type': token_type, 'expires_in': 900 if token_type == 'temp' else None})
+
+        # -------------------- 原有页面路由 --------------------
         @self.app.route('/')
         def main_page():
             return render_template('main_page.html')
@@ -849,6 +1028,7 @@ class WebService:
         def work_page(work_id):
             return render_template('work_page.html', work_id=work_id)
 
+        # -------------------- 数据API（部分需要鉴权）--------------------
         @self.app.route('/api/work/<work_id>')
         def get_work_details(work_id):
             work_details = self.data_manager.load_work_details(work_id)
@@ -875,6 +1055,7 @@ class WebService:
             return jsonify(data)
 
         @self.app.route('/api/scan', methods=['POST'])
+        @self._require_auth
         def trigger_scan():
             if self.scanner.scan_in_progress:
                 return jsonify({'status': 'error', 'message': '扫描正在进行中'})
@@ -886,6 +1067,7 @@ class WebService:
             return jsonify(self.config_manager.config)
 
         @self.app.route('/api/config/reload', methods=['POST'])
+        @self._require_auth
         def reload_config():
             self.config_manager.load()
             return jsonify({'status': 'success', 'message': '配置已重新加载'})
@@ -921,7 +1103,6 @@ OUTPUT_BASE_DIR = "/storage/emulated/0/1/answers"
 DETAIL_VERSION = 1
 
 def main():
-
     logger = Logger()
     logger.set_action("系统初始化")
 
