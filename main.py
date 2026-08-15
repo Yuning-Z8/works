@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-自动答案提取系统 v8
+自动作业提取系统 v8
 使用 SQLite 存储元数据和作业详情
 """
 
@@ -16,14 +16,16 @@ import sqlite3
 import atexit
 import uuid
 import secrets
-from datetime import datetime, timedelta
-from typing import Any, Dict, Set, List, Tuple, Optional
-from flask import Flask, render_template, jsonify, request, send_from_directory, g
+from functools import wraps
+from datetime import datetime
+from typing import Any, Dict, Set, List, Tuple, Optional, Union
+from flask import Flask, render_template, jsonify, request, send_from_directory
 
 
 # ============================================================================
 # 基础组件模块
 # ============================================================================
+
 
 class Logger:
     """日志管理"""
@@ -37,11 +39,11 @@ class Logger:
         BOLD = "\033[1m"
 
     def __init__(self, debug: bool = False):
-        self.current_action = ""
+        self.current_action: str = ""
         if debug:
             self.debug = self._debug
         else:
-            self.debug = lambda message: None
+            self.debug = lambda _: None
 
     def set_action(self, action):
         self.current_action = action
@@ -56,16 +58,16 @@ class Logger:
             return f"{level_color}[{timestamp}] [{self.current_action}] {message}{self.Colors.RESET}"
         return f"{level_color}[{timestamp}] {message}{self.Colors.RESET}"
 
-    def info(self, message):
+    def info(self, message: str):
         print(self._format_message("INFO", message))
 
-    def success(self, message):
+    def success(self, message: str):
         print(self._format_message("SUCCESS", message))
 
-    def warning(self, message):
+    def warning(self, message: str):
         print(self._format_message("WARNING", message))
 
-    def error(self, message):
+    def error(self, message: str):
         print(self._format_message("ERROR", message))
 
     def _debug(self, message: str):
@@ -84,12 +86,12 @@ class ConfigManager:
             "8": {"name": "化学", "color": "#B74093", "short": "化"},
             "13": {"name": "通用技术", "color": "#2ECC71", "short": "通"},
             "15": {"name": "信息技术", "color": "#00BCD4", "short": "信"},
-            "default": {"name": "未知", "color": "#A0A0A0", "short": "未"}
+            "default": {"name": "未知", "color": "#A0A0A0", "short": "未"},
         },
-        "check_interval": 3600
+        "check_interval": 3600,
     }
 
-    def __init__(self, config_path, logger: Logger):
+    def __init__(self, config_path: str, logger: Logger):
         self.config_path = config_path
         self.config = self.DEFAULT_CONFIG.copy()
         self.logger = logger
@@ -99,7 +101,7 @@ class ConfigManager:
         self.logger.set_action("配置")
         try:
             if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
+                with open(self.config_path, "r", encoding="utf-8") as f:
                     user_config = json.load(f)
                     self._deep_update(self.config, user_config)
                 self.logger.success("已加载配置文件")
@@ -114,7 +116,7 @@ class ConfigManager:
     def save(self):
         self.logger.set_action("配置")
         try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, ensure_ascii=False, indent=2)
             self.logger.info("配置已保存")
         except Exception as e:
@@ -124,31 +126,43 @@ class ConfigManager:
 
     def _deep_update(self, target, source):
         for key, value in source.items():
-            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
+            if (
+                isinstance(value, dict)
+                and key in target
+                and isinstance(target[key], dict)
+            ):
                 self._deep_update(target[key], value)
             else:
                 target[key] = value
 
     def get_subject_info(self, subject_id):
-        return self.config['subject_config'].get(str(subject_id),
-                                                self.config['subject_config']["default"])
+        return self.config["subject_config"].get(
+            str(subject_id), self.config["subject_config"]["default"]
+        )
 
     def get_check_interval(self):
-        return self.config.get('check_interval', 3600)
+        return self.config.get("check_interval", 3600)
 
 
 # ============================================================================
 # 数据库连接池
 # ============================================================================
 
+
 class SQLiteConnectionPool:
     """
     线程安全的 SQLite 连接池，支持最小/最大连接数，空闲超时自动清理多余连接
     """
 
-    def __init__(self, db_path: str, min_connections: int = 1, max_connections: int = 10,
-                 timeout: float = 30.0, idle_timeout: float = 600.0,
-                 check_interval: float = 60.0):
+    def __init__(
+        self,
+        db_path: str,
+        min_connections: int = 1,
+        max_connections: int = 10,
+        timeout: float = 30.0,
+        idle_timeout: float = 600.0,
+        check_interval: float = 60.0,
+    ):
         self.db_path = db_path
         self.min_connections = min_connections
         self.max_connections = max_connections
@@ -175,6 +189,7 @@ class SQLiteConnectionPool:
         def cleaner():
             while not self._stop_cleaner.wait(self._check_interval):
                 self._clean_idle_connections()
+
         self._cleaner_thread = threading.Thread(target=cleaner, daemon=True)
         self._cleaner_thread.start()
 
@@ -186,7 +201,10 @@ class SQLiteConnectionPool:
                 conn, last_used = self._idle_connections.get_nowait()
             except queue.Empty:
                 break
-            if len(to_keep) + self._idle_connections.qsize() + 1 <= self.min_connections:
+            if (
+                len(to_keep) + self._idle_connections.qsize() + 1
+                <= self.min_connections
+            ):
                 to_keep.append((conn, last_used))
             else:
                 if now - last_used < self.idle_timeout:
@@ -293,8 +311,9 @@ class PooledConnection:
 
 
 # ============================================================================
-# 数据管理（仅操作，不创建表）
+# 数据管理
 # ============================================================================
+
 
 class DataManager:
     def __init__(self, base_dir: str):
@@ -306,21 +325,8 @@ class DataManager:
             min_connections=1,
             max_connections=10,
             idle_timeout=600,
-            check_interval=60
+            check_interval=60,
         )
-        self._init_tables()
-
-    def _init_tables(self):
-        """初始化数据库表"""
-        with self.pool.connection() as conn:
-            # 创建永久令牌表
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS permanent_tokens (
-                    token TEXT PRIMARY KEY,
-                    created_at REAL NOT NULL
-                )
-            """)
-            conn.commit()
 
     # -------------------- 元数据批量操作 --------------------
     def batch_upsert_works_info(self, works_list: List[Dict[str, Any]]) -> None:
@@ -329,19 +335,25 @@ class DataManager:
         with self.pool.connection() as conn:
             conn.execute("BEGIN TRANSACTION")
             try:
-                conn.executemany("""
+                conn.executemany(
+                    """
                     INSERT OR REPLACE INTO works_info 
                     (work_id, work_name, subject_id, start_time, upto_time, is_exam, has_content)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, [(
-                    w['work_id'],
-                    w['work_name'],
-                    w['subject_id'],
-                    w['start_time'],
-                    w['upto_time'],
-                    1 if w['is_exam'] else 0,
-                    1 if w['has_content'] else 0
-                ) for w in works_list])
+                """,
+                    [
+                        (
+                            w["work_id"],
+                            w["work_name"],
+                            w["subject_id"],
+                            w["start_time"],
+                            w["upto_time"],
+                            1 if w["is_exam"] else 0,
+                            1 if w["has_content"] else 0,
+                        )
+                        for w in works_list
+                    ],
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -353,14 +365,20 @@ class DataManager:
         with self.pool.connection() as conn:
             conn.execute("BEGIN TRANSACTION")
             try:
-                conn.executemany("""
+                conn.executemany(
+                    """
                     INSERT OR REPLACE INTO work_details (work_id, version, detail_json)
                     VALUES (?, ?, ?)
-                """, [(
-                    work_id,
-                    DETAIL_VERSION,
-                    json.dumps(details, ensure_ascii=False)
-                ) for work_id, details in details_list])
+                """,
+                    [
+                        (
+                            work_id,
+                            DETAIL_VERSION,
+                            json.dumps(details, ensure_ascii=False),
+                        )
+                        for work_id, details in details_list
+                    ],
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -369,7 +387,7 @@ class DataManager:
     def load_no_content_url_records(self) -> Set[str]:
         with self.pool.connection() as conn:
             cursor = conn.execute("SELECT work_id FROM no_content_url")
-            return {row['work_id'] for row in cursor.fetchall()}
+            return {row["work_id"] for row in cursor.fetchall()}
 
     def batch_update_no_content_url(self, current_set: Set[str]) -> None:
         """用当前集合完全替换 no_content_url 表"""
@@ -378,8 +396,10 @@ class DataManager:
             try:
                 conn.execute("DELETE FROM no_content_url")
                 if current_set:
-                    conn.executemany("INSERT INTO no_content_url (work_id) VALUES (?)",
-                                     [(wid,) for wid in current_set])
+                    conn.executemany(
+                        "INSERT INTO no_content_url (work_id) VALUES (?)",
+                        [(wid,) for wid in current_set],
+                    )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -387,41 +407,53 @@ class DataManager:
 
     def load_last_scan_time(self) -> int:
         with self.pool.connection() as conn:
-            row = conn.execute("SELECT scan_time FROM last_scan_time WHERE id = 1").fetchone()
+            row = conn.execute(
+                "SELECT scan_time FROM last_scan_time WHERE id = 1"
+            ).fetchone()
             if row:
-                return row['scan_time']
+                return row["scan_time"]
             return 1765400000000  # 2025-12-10 00:00:00
 
     def save_last_scan_time(self, scan_time: int) -> None:
         with self.pool.connection() as conn:
-            conn.execute("INSERT OR REPLACE INTO last_scan_time (id, scan_time) VALUES (1, ?)",
-                         (scan_time,))
+            conn.execute(
+                "INSERT OR REPLACE INTO last_scan_time (id, scan_time) VALUES (1, ?)",
+                (scan_time,),
+            )
             conn.commit()
 
     # -------------------- 查询操作 --------------------
     def get_works_by_date(self, date_str: str) -> List[Dict[str, Any]]:
         with self.pool.connection() as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT work_id, work_name, subject_id, start_time, upto_time, is_exam, has_content
                 FROM works_info
                 WHERE work_date = ?
                 ORDER BY start_time DESC
-            """, (date_str,))
+            """,
+                (date_str,),
+            )
             rows = cursor.fetchall()
-            return [{
-                'work_id': row['work_id'],
-                'work_name': row['work_name'],
-                'subject_id': row['subject_id'],
-                'start_time': row['start_time'],
-                'upto_time': row['upto_time'],
-                'is_exam': bool(row['is_exam']),
-                'has_content': bool(row['has_content']),
-            } for row in rows]
+            return [
+                {
+                    "work_id": row["work_id"],
+                    "work_name": row["work_name"],
+                    "subject_id": row["subject_id"],
+                    "start_time": row["start_time"],
+                    "upto_time": row["upto_time"],
+                    "is_exam": bool(row["is_exam"]),
+                    "has_content": bool(row["has_content"]),
+                }
+                for row in rows
+            ]
 
-    def get_works_counts_by_months(self, months: List[str]) -> Dict[str, Dict[str, int]]:
+    def get_works_counts_by_months(
+        self, months: List[str]
+    ) -> Dict[str, Dict[str, int]]:
         if not months:
             return {}
-        placeholders = ','.join(['?'] * len(months))
+        placeholders = ",".join(["?"] * len(months))
         sql = f"""
             SELECT month_str, work_date, COUNT(*) as cnt
             FROM works_info
@@ -433,27 +465,29 @@ class DataManager:
             rows = cursor.fetchall()
         result = {month: {} for month in months}
         for row in rows:
-            month_str = row['month_str']
-            work_date = row['work_date']
+            month_str = row["month_str"]
+            work_date = row["work_date"]
             formatted = f"{work_date[:4]}-{work_date[4:6]}-{work_date[6:8]}"
-            result[month_str][formatted] = row['cnt']
+            result[month_str][formatted] = row["cnt"]
         return result
 
     def get_total_works_count(self) -> int:
         with self.pool.connection() as conn:
             row = conn.execute("SELECT COUNT(*) as cnt FROM works_info").fetchone()
-            return row['cnt'] if row else 0
+            return row["cnt"] if row else 0
 
     def load_work_details(self, work_id: str) -> Optional[Dict]:
         with self.pool.connection() as conn:
-            row = conn.execute("SELECT version, detail_json FROM work_details WHERE work_id = ?",
-                               (work_id,)).fetchone()
+            row = conn.execute(
+                "SELECT version, detail_json FROM work_details WHERE work_id = ?",
+                (work_id,),
+            ).fetchone()
             if not row:
                 return None
-            version = row['version']
-            details = json.loads(row['detail_json'])
+            version = row["version"]
+            details = json.loads(row["detail_json"])
             migrated = self._migrate_work_details(details, version)
-            if migrated.get('version') != version:
+            if migrated.get("version") != version:
                 self.save_work_details(work_id, migrated)  # 回写迁移后的版本
                 return migrated
             return details
@@ -464,21 +498,24 @@ class DataManager:
         if current_version >= LATEST_VERSION:
             return details
         if current_version == 1:
-            details['version'] = 2
-            if 'detail' not in details:
-                details['detail'] = {}
+            details["version"] = 2
+            if "detail" not in details:
+                details["detail"] = {}
         return details
 
     def save_work_details(self, work_id: str, details: Dict) -> bool:
-        if 'version' not in details:
-            details['version'] = 1
+        if "version" not in details:
+            details["version"] = 1
         detail_json = json.dumps(details, ensure_ascii=False)
         try:
             with self.pool.connection() as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO work_details (work_id, version, detail_json)
                     VALUES (?, ?, ?)
-                """, (work_id, details['version'], detail_json))
+                """,
+                    (work_id, details["version"], detail_json),
+                )
                 conn.commit()
             return True
         except Exception as e:
@@ -492,14 +529,16 @@ class DataManager:
             cursor = conn.execute("SELECT token, created_at FROM permanent_tokens")
             tokens = {}
             for row in cursor.fetchall():
-                tokens[row['token']] = {'type': 'permanent', 'expire': None, 'created_at': row['created_at']}
+                tokens[row["token"]] = None
             return tokens
 
     def save_permanent_token(self, token: str) -> None:
         """保存永久令牌"""
         with self.pool.connection() as conn:
-            conn.execute("INSERT INTO permanent_tokens (token, created_at) VALUES (?, ?)",
-                         (token, time.time()))
+            conn.execute(
+                "INSERT INTO permanent_tokens (token, created_at) VALUES (?, ?)",
+                (token, time.time()),
+            )
             conn.commit()
 
     def delete_permanent_token(self, token: str) -> None:
@@ -513,11 +552,14 @@ class DataManager:
 
 
 # ============================================================================
-# 作业处理模块
+# 扫描提取作业
 # ============================================================================
 
+
 class DatabaseExtractor:
-    def __init__(self, db_path, file_base_dir, data_manager: DataManager, logger: Logger):
+    def __init__(
+        self, db_path, file_base_dir, data_manager: DataManager, logger: Logger
+    ):
         self.db_path = db_path
         self.file_base_dir = file_base_dir
         self.data_manager = data_manager
@@ -531,7 +573,7 @@ class DatabaseExtractor:
             if not os.path.exists(self.db_path):
                 self.logger.warning(f"数据库文件不存在：{self.db_path}")
                 return
-            conn = sqlite3.connect(f'file:{self.db_path}?mode=ro', uri=True)
+            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
             try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT _id, NAME FROM QuestionUserType")
@@ -549,12 +591,11 @@ class DatabaseExtractor:
             self.logger.clear_action()
 
     def extract_work_info(self) -> List[dict]:
-        self.logger.set_action("数据库")
         try:
             if not os.path.exists(self.db_path):
                 self.logger.error(f"数据库文件不存在：{self.db_path}")
                 return []
-            conn = sqlite3.connect(f'file:{self.db_path}?mode=ro', uri=True)
+            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
             no_url_set = self.data_manager.load_no_content_url_records()
             last_scan_ts = self.data_manager.load_last_scan_time()
             latest_scan_ts = last_scan_ts
@@ -564,7 +605,7 @@ class DatabaseExtractor:
                 now_ms = int(time.time() * 1000)
 
                 if no_url_set:
-                    placeholders = ','.join(['?'] * len(no_url_set))
+                    placeholders = ",".join(["?"] * len(no_url_set))
                     query = f"""
                     SELECT WORK_ID, CONTENT_URL, NAME, SUBJECT,
                            CREATE_TIME, UPTO_TIME, START_TIME, END_TIME, UPDATE_TIME
@@ -587,13 +628,24 @@ class DatabaseExtractor:
 
                 for row in rows:
                     try:
-                        work_id, content_url, work_name, subject_id, \
-                            create_time, upto_time, start_time, end_time, update_time = row
+                        (
+                            work_id,
+                            content_url,
+                            work_name,
+                            subject_id,
+                            create_time,
+                            upto_time,
+                            start_time,
+                            end_time,
+                            update_time,
+                        ) = row
 
                         if work_id in no_url_set:
                             if content_url:
                                 no_url_set.remove(work_id)
-                                self.logger.info(f"{work_name} (科目: {subject_id}) 新增URL")
+                                self.logger.info(
+                                    f"{work_name} (科目: {subject_id}) 新增URL"
+                                )
                             elif now_ms > max(upto_time, end_time):
                                 no_url_set.remove(work_id)
                                 self.logger.info(f"移除过期无内容作业: {work_name}")
@@ -605,26 +657,30 @@ class DatabaseExtractor:
                             if now_ms > max(upto_time, end_time):
                                 continue
                             no_url_set.add(work_id)
-                            file_name = 'no_file'
+                            file_name = "no_file"
                             no_url = True
                         else:
                             file_name = content_url[-36:-4]
                             no_url = False
 
                         is_exam = upto_time == 0 and start_time != 0 and end_time != 0
-                        work_info = {
-                            'work_id': work_id,
-                            'no_url': no_url,
-                            'file_name': file_name,
-                            'month_str': datetime.fromtimestamp(create_time // 1000).strftime("%Y%m"),
-                            'work_name': work_name,
-                            'subject_id': subject_id,
-                            'is_exam': is_exam,
-                            'start_time': start_time if is_exam else create_time,
-                            'upto_time': end_time if is_exam else upto_time
+                        work = {
+                            "work_id": work_id,
+                            "has_content": not no_url,
+                            "file_name": file_name,
+                            "month_str": datetime.fromtimestamp(
+                                create_time // 1000
+                            ).strftime("%Y%m"),
+                            "work_name": work_name,
+                            "subject_id": subject_id,
+                            "is_exam": is_exam,
+                            "start_time": start_time if is_exam else create_time,
+                            "upto_time": end_time if is_exam else upto_time,
                         }
-                        all_works.append(work_info)
-                        self.logger.info(f"发现{'无URL' if no_url else ''}{'考试' if is_exam else '作业'} {work_name} (科目: {subject_id})")
+                        all_works.append(work)
+                        self.logger.info(
+                            f"发现{'无URL' if no_url else ''}{'考试' if is_exam else '作业'} {work_name} (科目: {subject_id})"
+                        )
 
                         if update_time > latest_scan_ts:
                             latest_scan_ts = update_time
@@ -644,8 +700,6 @@ class DatabaseExtractor:
         except Exception as e:
             self.logger.error(f"提取失败：{str(e)}")
             return []
-        finally:
-            self.logger.clear_action()
 
     def get_question_type_name(self, type_id):
         return self.question_type_mapping.get(type_id, f"未知类型({type_id})")
@@ -657,125 +711,135 @@ class WorkFileProcessor:
         self.logger = logger
         self.db_extractor = db_extractor
 
-    def process(self, work_info: dict):
-        self.logger.set_action("文件处理")
-        file_path = os.path.join(self.file_base_dir, work_info['month_str'], work_info['file_name']+'.txt')
+    def process(self, work: dict):
+        file_path = os.path.join(
+            self.file_base_dir, work["month_str"], work["file_name"] + ".txt"
+        )
         if not os.path.exists(file_path):
             self.logger.warning(f"文件不存在：{file_path}")
-            self.logger.clear_action()
             return None
 
-        self.logger.info(f"开始处理 {work_info['work_name']}")
+        self.logger.info(f"开始处理 {work['work_name']}")
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError:
             self.logger.error(f"无效JSON：{file_path}")
-            self.logger.clear_action()
             return None
         except Exception as e:
             self.logger.error(f"读取失败：{str(e)}")
-            self.logger.clear_action()
             return None
 
-        work_details = self._extract_work_details(data, work_info)
-        self.logger.success(f"提取作业详情：{work_info['work_name']}")
-        self.logger.clear_action()
+        work_details = self._extract_work_details(data, work)
+        self.logger.success(f"已提取作业详情：{work['work_name']}")
         return work_details
 
-    def _extract_work_details(self, data, work_info):
-        work_details = {
-            'work_name': work_info['work_name'],
-            'subject_id': work_info['subject_id'],
-            'upto_time': work_info['upto_time'],
-            'is_exam': work_info['is_exam'],
-            'start_time': work_info['start_time'],
-            'questions': []
-        }
+    def _extract_work_details(self, data, work):
+        work["questions"] = []
 
         answers_by_question = {}
-        for answer in data.get('questionAnswers', []):
-            qid = answer['questionId']
+        for answer in data.get("questionAnswers", []):
+            qid = answer["questionId"]
             answers_by_question.setdefault(qid, []).append(answer)
 
-        question_map = {q['questionId']: q for q in data.get('questionPoolContentInfos', [])}
+        question_map = {
+            q["questionId"]: q for q in data.get("questionPoolContentInfos", [])
+        }
         parent_to_children = {}
-        for question in data.get('questionPoolContentInfos', []):
-            parent_id = question.get('parentQuestionId', '0')
+        for question in data.get("questionPoolContentInfos", []):
+            parent_id = question.get("parentQuestionId", "0")
             if parent_id != "0" and parent_id in question_map:
                 parent_to_children.setdefault(parent_id, []).append(question)
 
         top_level_questions = [
-            q for q in data.get('questionPoolContentInfos', [])
-            if q.get('parentQuestionId', '0') == "0" or q.get('parentQuestionId') not in question_map
+            q
+            for q in data.get("questionPoolContentInfos", [])
+            if q.get("parentQuestionId", "0") == "0"
+            or q.get("parentQuestionId") not in question_map
         ]
 
         qn = 0
         for question in top_level_questions:
-            qid = question['questionId']
-            question_user_type = question.get('questionUserType', 0)
-            question_type_name = self.db_extractor.get_question_type_name(question_user_type)
+            qid = question["questionId"]
+            question_user_type = question.get("questionUserType", 0)
+            question_type_name = self.db_extractor.get_question_type_name(
+                question_user_type
+            )
 
             if question_user_type == 0:
                 divider_question = {
-                    'question_id': qid,
-                    'question_type': '分割线',
-                    'stem_content': self._process_html_content(question.get('stemContent', '')),
-                    'explain_content': '',
-                    'has_children': False,
-                    'answers': [],
-                    'sub_questions': []
+                    "question_id": qid,
+                    "question_type": "分割线",
+                    "stem_content": self._process_html_content(
+                        question.get("stemContent", "")
+                    ),
+                    "explain_content": "",
+                    "has_children": False,
+                    "answers": [],
+                    "sub_questions": [],
                 }
-                work_details['questions'].append(divider_question)
+                work["questions"].append(divider_question)
                 continue
 
             qn += 1
             answers = answers_by_question.get(qid, [])
-            stem_content = self._process_html_content(question.get('stemContent', ''))
-            explain_content = self._process_html_content(question.get('explainContent', ''))
+            stem_content = self._process_html_content(question.get("stemContent", ""))
+            explain_content = self._process_html_content(
+                question.get("explainContent", "")
+            )
             has_children = qid in parent_to_children
 
             question_data = {
-                'question_id': qid,
-                'question_number': qn,
-                'question_type': question_type_name,
-                'stem_content': stem_content,
-                'explain_content': explain_content,
-                'has_children': has_children,
-                'answers': [],
-                'sub_questions': []
+                "question_id": qid,
+                "question_number": qn,
+                "question_type": question_type_name,
+                "stem_content": stem_content,
+                "explain_content": explain_content,
+                "has_children": has_children,
+                "answers": [],
+                "sub_questions": [],
             }
 
             for answer in answers:
-                question_data['answers'].append(self._process_html_content(answer['answerContent']))
+                question_data["answers"].append(
+                    self._process_html_content(answer["answerContent"])
+                )
 
             if has_children:
                 sub_questions = parent_to_children[qid]
                 sub_qn = 1
                 for sub_question in sub_questions:
-                    sub_qid = sub_question['questionId']
-                    sub_question_user_type = sub_question.get('questionUserType', 0)
-                    sub_question_type_name = self.db_extractor.get_question_type_name(sub_question_user_type)
+                    sub_qid = sub_question["questionId"]
+                    sub_question_user_type = sub_question.get("questionUserType", 0)
+                    sub_question_type_name = self.db_extractor.get_question_type_name(
+                        sub_question_user_type
+                    )
                     sub_answers = answers_by_question.get(sub_qid, [])
-                    sub_stem_content = self._process_html_content(sub_question.get('stemContent', ''))
-                    sub_explain_content = self._process_html_content(sub_question.get('explainContent', ''))
+                    sub_stem_content = self._process_html_content(
+                        sub_question.get("stemContent", "")
+                    )
+                    sub_explain_content = self._process_html_content(
+                        sub_question.get("explainContent", "")
+                    )
 
                     sub_question_data = {
-                        'question_id': sub_qid,
-                        'question_number': sub_qn,
-                        'question_type': sub_question_type_name,
-                        'stem_content': sub_stem_content,
-                        'explain_content': sub_explain_content,
-                        'answers': []
+                        "question_id": sub_qid,
+                        "question_number": sub_qn,
+                        "question_type": sub_question_type_name,
+                        "stem_content": sub_stem_content,
+                        "explain_content": sub_explain_content,
+                        "answers": [],
                     }
                     for answer in sub_answers:
-                        sub_question_data['answers'].append(self._process_html_content(answer['answerContent']))
-                    question_data['sub_questions'].append(sub_question_data)
+                        sub_question_data["answers"].append(
+                            self._process_html_content(answer["answerContent"])
+                        )
+                    question_data["sub_questions"].append(sub_question_data)
                     sub_qn += 1
 
-            work_details['questions'].append(question_data)
+            work["questions"].append(question_data)
 
-        return work_details
+        return work
 
     def _process_html_content(self, text):
         if not text:
@@ -783,61 +847,55 @@ class WorkFileProcessor:
         text = html.unescape(text)
         text = re.sub(
             r'<span\s+class="mathquill-embedded-latex"\s*>(.*?)</span>',
-            r'\(\1\)',
+            r"\(\1\)",
             text,
-            flags=re.DOTALL
+            flags=re.DOTALL,
         )
         return text
 
 
-# ============================================================================
-# 扫描服务模块
-# ============================================================================
-
 class Scanner:
-    def __init__(self, config_manager: ConfigManager, data_manager: DataManager,
-                 db_extractor: DatabaseExtractor, work_processor: WorkFileProcessor, logger: Logger):
+    def __init__(
+        self,
+        config_manager: ConfigManager,
+        data_manager: DataManager,
+        db_extractor: DatabaseExtractor,
+        work_processor: WorkFileProcessor,
+        logger: Logger,
+    ):
         self.config_manager = config_manager
         self.data_manager = data_manager
         self.db_extractor = db_extractor
         self.work_processor = work_processor
         self.logger = logger
-        self.scan_in_progress = False
+        self.scan_lock = threading.Lock()
         self.last_scan_time = 0
 
     def perform_scan(self):
-        if self.scan_in_progress:
+        if not self.scan_lock.acquire(blocking=False):
             self.logger.warning("扫描任务正在进行中，跳过")
             return
-
-        self.scan_in_progress = True
-        self.logger.set_action("扫描任务")
         self.logger.info("开始扫描作业...")
 
         try:
+            self.logger.set_action("提取数据")
             works = self.db_extractor.extract_work_info()
             works_info_batch = []
             details_batch = []
 
+            self.logger.set_action("文件处理")
             for work in works:
                 # 准备元数据（用于 works_info）
-                works_info_batch.append({
-                    'work_id': work['work_id'],
-                    'work_name': work['work_name'],
-                    'subject_id': work['subject_id'],
-                    'start_time': work['start_time'],
-                    'upto_time': work['upto_time'],
-                    'is_exam': work['is_exam'],
-                    'has_content': not work['no_url']
-                })
+                works_info_batch.append(work)
 
                 # 如果作业有内容，处理详情
-                if not work['no_url']:
+                if work["has_content"]:
                     work_details = self.work_processor.process(work)
                     if work_details:
-                        details_batch.append((work['work_id'], work_details))
+                        details_batch.append((work["work_id"], work_details))
 
             # 批量写入数据库
+            self.logger.set_action("保存数据")
             if works_info_batch:
                 self.data_manager.batch_upsert_works_info(works_info_batch)
                 self.logger.info(f"已更新 {len(works_info_batch)} 条作业元数据")
@@ -846,18 +904,18 @@ class Scanner:
                 self.logger.info(f"已保存 {len(details_batch)} 个作业详情")
 
             self.logger.success("扫描完成")
-            self.last_scan_time = int(time.time())
+            self.last_scan_time = int(time.time() - 10)
         except Exception as e:
             self.logger.error(f"执行失败：{str(e)}")
         finally:
-            self.scan_in_progress = False
+            self.scan_lock.release()
             self.logger.clear_action()
 
     def start_scan_loop(self):
         self.logger.set_action("扫描循环")
         while True:
             try:
-                if not self.scan_in_progress:
+                if not self.scan_lock.locked():
                     self.perform_scan()
                 time.sleep(self.config_manager.get_check_interval())
             except Exception as e:
@@ -869,219 +927,215 @@ class Scanner:
 # 网络服务模块
 # ============================================================================
 
+
+class Author:
+    def __init__(self, logger: Logger, data_manager: DataManager) -> None:
+        self.logger = logger
+        self.data_manager = data_manager
+
+        self.auth_lock = threading.RLock()
+        self.verification_codes = {}
+        self.tokens = {}
+
+        self.tokens.update(self.data_manager.load_permanent_tokens())
+
+    def auth(self, token):
+        with self.auth_lock:
+            if token not in self.tokens:
+                return False
+            if self.tokens[token] is None:
+                return True
+            time_now = time.time()
+            if self.tokens[token] > time_now:
+                self.tokens[token] = time_now + EXPIRE_TEMP_TOKEN
+                return True
+            else:
+                del self.tokens[token]
+                return False
+
+    def create_code(self, permanent: bool, info: str):
+        code = self._generate_verification_code()
+        code_id = str(uuid.uuid4())
+        expire = time.time() + EXPIRE_VERIFY
+        with self.auth_lock:
+            self.verification_codes[code_id] = (code, permanent, expire)
+        self.logger.info(
+            f"\t令牌申请：{info}\n\t类型：{'永久' if permanent else '临时'}  验证码：{code}"
+        )
+        return code_id
+
+    def verify(self, code_id, verify_code):
+        with self.auth_lock:
+            if code_id not in self.verification_codes:
+                return False
+            if self.verification_codes[code_id][2] < time.time():
+                del self.verification_codes[code_id]
+                return False
+            if verify_code != self.verification_codes[code_id][0]:
+                return False
+            token = secrets.token_urlsafe()
+            if self.verification_codes[code_id][1]:
+                self.tokens[token] = None
+                self.data_manager.save_permanent_token(token)
+                self.logger.info(f"创建了一个永久令牌 {token}")
+            else:
+                self.tokens[token] = time.time() + EXPIRE_TEMP_TOKEN
+                self.logger.info(f"创建了一个临时令牌 {token}")
+            del self.verification_codes[code_id]
+            return token
+
+    def _clean(self):
+        now = time.time()
+        with self.auth_lock:
+            pass
+
+    def _generate_verification_code(self) -> str:
+        """生成验证码"""
+        return secrets.token_hex(3).upper()
+
+
 class WebService:
-    def __init__(self, scanner: Scanner, config_manager: ConfigManager, data_manager: DataManager):
+    def __init__(
+        self,
+        scanner: Scanner,
+        config_manager: ConfigManager,
+        data_manager: DataManager,
+        author: Author,
+    ):
         self.scanner = scanner
         self.config_manager = config_manager
         self.data_manager = data_manager
+        self.author = author
         self.app = Flask(__name__)
-        self.app.config['TEMPLATES_AUTO_RELOAD'] = True
-
-        # 鉴权存储
-        self._auth_lock = threading.RLock()
-        self._verification_codes = {}   # code_id -> {'code': str, 'type': str, 'expire': float}
-        self._tokens = {}               # token -> {'type': str, 'expire': float (None for permanent)}
-
-        # 加载永久令牌
-        self._tokens.update(self.data_manager.load_permanent_tokens())
+        self.app.config["TEMPLATES_AUTO_RELOAD"] = True
 
         self._setup_routes()
 
-    def _generate_verification_code(self) -> str:
-        """生成6位数字字母验证码"""
-        return secrets.token_hex(3).upper()
-
-    def _clean_expired(self):
-        """清理过期的验证码和临时令牌"""
-        now = time.time()
-        with self._auth_lock:
-            # 清理验证码
-            expired_codes = [cid for cid, data in self._verification_codes.items()
-                             if data['expire'] < now]
-            for cid in expired_codes:
-                del self._verification_codes[cid]
-
-            # 清理临时令牌
-            expired_tokens = [token for token, data in self._tokens.items()
-                              if data.get('expire') is not None and data['expire'] < now]
-            for token in expired_tokens:
-                del self._tokens[token]
-
-        if expired_codes or expired_tokens:
-            print(f"{Logger.Colors.WARNING}[AUTH] 清理过期项：验证码 {len(expired_codes)} 个，临时令牌 {len(expired_tokens)} 个{Logger.Colors.RESET}")
-
     def _require_auth(self, f):
         """鉴权装饰器"""
-        from functools import wraps
+
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            auth_header = request.headers.get('Authorization')
+            auth_header = request.headers.get("Authorization")
             if not auth_header:
-                print(f"{Logger.Colors.ERROR}[AUTH] 缺少认证头，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                return jsonify({'error': '缺少认证头'}), 401
+                return jsonify({"error": "缺少认证头"}), 401
 
             parts = auth_header.split()
-            if len(parts) != 2 or parts[0].lower() != 'bearer':
-                print(f"{Logger.Colors.ERROR}[AUTH] 认证头格式错误，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                return jsonify({'error': '认证头格式错误，应使用 Bearer <token>'}), 401
+            if len(parts) != 2 or parts[0].lower() != "bearer":
+                return jsonify({"error": "认证头格式错误，应使用 Bearer <token>"}), 401
 
             token = parts[1]
-            with self._auth_lock:
-                token_data = self._tokens.get(token)
-                if not token_data:
-                    print(f"{Logger.Colors.ERROR}[AUTH] 无效令牌，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                    return jsonify({'error': '无效的令牌'}), 401
+            if not self.author.auth(token):
+                return jsonify({"error": "无效的令牌"}), 401
 
-                # 检查临时令牌是否过期
-                expire = token_data.get('expire')
-                if expire is not None and expire < time.time():
-                    del self._tokens[token]
-                    print(f"{Logger.Colors.WARNING}[AUTH] 令牌已过期，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                    return jsonify({'error': '令牌已过期'}), 401
-
-                # 可选：记录令牌类型到请求上下文
-                g.auth_token_type = token_data['type']
-
-            print(f"{Logger.Colors.SUCCESS}[AUTH] 鉴权成功，令牌类型: {token_data['type']}，IP: {request.remote_addr}{Logger.Colors.RESET}")
             return f(*args, **kwargs)
+
         return decorated_function
 
     def _setup_routes(self):
         # -------------------- 鉴权API --------------------
-        @self.app.route('/api/auth/code', methods=['GET'])
+        @self.app.route("/api/auth/code", methods=["GET"])
         def get_auth_code():
             """获取验证码（2分钟有效）"""
-            code_type = request.args.get('type', 'temp')
-            if code_type not in ('temp', 'permanent'):
-                print(f"{Logger.Colors.ERROR}[AUTH] 无效的验证码类型: {code_type}，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                return jsonify({'error': '类型必须是 temp 或 permanent'}), 400
+            code_type = request.args.get("type", "temp")
+            if code_type == "temp":
+                permanent = False
+            elif code_type == "permanent":
+                permanent = True
+            else:
+                return jsonify({"error": "类型必须是 temp 或 permanent"}), 400
 
-            code = self._generate_verification_code()
-            code_id = str(uuid.uuid4())
-            expire = time.time() + 120  # 2分钟
+            code_id = self.author.create_code(
+                permanent, f"请求IP {request.remote_addr}"
+            )
+            return jsonify({"code_id": code_id, "expires_in": EXPIRE_VERIFY})
 
-            with self._auth_lock:
-                self._verification_codes[code_id] = {
-                    'code': code,
-                    'type': code_type,
-                    'expire': expire
-                }
-
-            # 控制台打印验证码和类型
-            type_desc = "临时" if code_type == 'temp' else "永久"
-            print(f"\n{Logger.Colors.BOLD}{Logger.Colors.INFO}[AUTH] 验证码已生成: {type_desc} {code} (code_id: {code_id}){Logger.Colors.RESET}\n")
-            print(f"{Logger.Colors.INFO}[AUTH] 验证码请求，类型: {code_type}，IP: {request.remote_addr}{Logger.Colors.RESET}")
-
-            return jsonify({'code_id': code_id, 'expires_in': 120})
-
-        @self.app.route('/api/auth/verify', methods=['POST'])
+        @self.app.route("/api/auth/verify", methods=["POST"])
         def verify_code():
             """验证验证码并返回令牌"""
             data = request.get_json()
             if not data:
-                print(f"{Logger.Colors.ERROR}[AUTH] 缺少JSON数据，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                return jsonify({'error': '需要JSON数据'}), 400
+                return jsonify({"error": "需要JSON数据"}), 400
 
-            code_id = data.get('code_id')
-            code_str = data.get('code')
+            code_id = data.get("code_id")
+            code_str = data.get("code")
             if not code_id or not code_str:
-                print(f"{Logger.Colors.ERROR}[AUTH] 缺少code_id或code，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                return jsonify({'error': '缺少 code_id 或 code'}), 400
+                return jsonify({"error": "缺少 code_id 或 code"}), 400
 
-            with self._auth_lock:
-                self._clean_expired()
-                stored = self._verification_codes.get(code_id)
-                if not stored:
-                    print(f"{Logger.Colors.WARNING}[AUTH] 无效code_id: {code_id}，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                    return jsonify({'error': '无效的 code_id'}), 400
-
-                if stored['code'] != code_str:
-                    print(f"{Logger.Colors.WARNING}[AUTH] 验证码错误，code_id: {code_id}，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                    return jsonify({'error': '验证码错误'}), 400
-
-                # 验证通过，生成令牌
-                token_type = stored['type']
-                token = secrets.token_urlsafe(32)
-
-                if token_type == 'temp':
-                    # 临时令牌，有效期15分钟
-                    expire = time.time() + 900
-                    self._tokens[token] = {'type': 'temp', 'expire': expire}
-                    print(f"{Logger.Colors.SUCCESS}[AUTH] 临时令牌生成，IP: {request.remote_addr}{Logger.Colors.RESET}")
-                else:
-                    # 永久令牌，永不过期，保存到数据库
-                    self._tokens[token] = {'type': 'permanent', 'expire': None}
-                    self.data_manager.save_permanent_token(token)
-                    print(f"{Logger.Colors.SUCCESS}[AUTH] 永久令牌生成并保存到数据库，IP: {request.remote_addr}{Logger.Colors.RESET}")
-
-                # 删除已使用的验证码
-                del self._verification_codes[code_id]
-
-            return jsonify({'token': token, 'type': token_type, 'expires_in': 900 if token_type == 'temp' else None})
+            token = self.author.verify(code_id, code_str)
+            if not token:
+                return jsonify({"error": "验证码错误"}), 400
+            return jsonify({"token": token})
 
         # -------------------- 原有页面路由 --------------------
-        @self.app.route('/')
+        @self.app.route("/")
         def main_page():
-            return render_template('main_page.html')
+            return render_template("main_page.html")
 
-        @self.app.route('/work/<work_id>')
+        @self.app.route("/work/<work_id>")
         def work_page(work_id):
-            return render_template('work_page.html', work_id=work_id)
+            return render_template("work_page.html", work_id=work_id)
 
         # -------------------- 数据API（部分需要鉴权）--------------------
-        @self.app.route('/api/work/<work_id>')
+        @self.app.route("/api/work/<work_id>")
         def get_work_details(work_id):
             work_details = self.data_manager.load_work_details(work_id)
             if not work_details:
-                return jsonify({'error': '作业不存在'}), 404
-            subject_info = self.config_manager.get_subject_info(work_details.get('subject_id', 0))
-            work_details['subject_info'] = subject_info
+                return jsonify({"error": "作业不存在"}), 404
+            subject_info = self.config_manager.get_subject_info(
+                work_details.get("subject_id", 0)
+            )
+            work_details["subject_info"] = subject_info
             return jsonify(work_details)
 
-        @self.app.route('/api/works')
+        @self.app.route("/api/works")
         def get_works():
-            date_param = request.args.get('date', '')
+            date_param = request.args.get("date", "")
             if not date_param:
                 return jsonify([])
-            search_date = date_param.replace('-', '')
+            search_date = date_param.replace("-", "")
             works = self.data_manager.get_works_by_date(search_date)
             return jsonify(works)
 
-        @self.app.route('/api/calendar')
+        @self.app.route("/api/download/html")
+        def download_work():
+            return jsonify({}), 501
+
+        @self.app.route("/api/calendar")
         def get_calendar_data():
-            months_param = request.args.get('months', '')
-            months = months_param.split(',') if months_param else []
+            months_param = request.args.get("months", "")
+            months = months_param.split(",") if months_param else []
             data = self.data_manager.get_works_counts_by_months(months)
             return jsonify(data)
 
-        @self.app.route('/api/scan', methods=['POST'])
+        @self.app.route("/api/scan", methods=["POST"])
         @self._require_auth
         def trigger_scan():
-            if self.scanner.scan_in_progress:
-                return jsonify({'status': 'error', 'message': '扫描正在进行中'})
+            if self.scanner.scan_lock.locked():
+                return jsonify({"status": "error", "message": "扫描正在进行中"})
             threading.Thread(target=self.scanner.perform_scan, daemon=True).start()
-            return jsonify({'status': 'success', 'message': '扫描已开始'})
+            return jsonify({"status": "success", "message": "扫描已开始"})
 
-        @self.app.route('/api/config')
+        @self.app.route("/api/config")
         def get_config():
             return jsonify(self.config_manager.config)
 
-        @self.app.route('/api/config/reload', methods=['POST'])
+        @self.app.route("/api/config/reload", methods=["POST"])
         @self._require_auth
         def reload_config():
             self.config_manager.load()
-            return jsonify({'status': 'success', 'message': '配置已重新加载'})
+            return jsonify({"status": "success", "message": "配置已重新加载"})
 
-        @self.app.route('/api/status')
+        @self.app.route("/api/status")
         def get_status():
             status = {
-                'last_scan_time': self.scanner.last_scan_time,
-                'total_works': self.data_manager.get_total_works_count(),
-                'scan_in_progress': self.scanner.scan_in_progress,
+                "last_scan_time": self.scanner.last_scan_time,
+                "total_works": self.data_manager.get_total_works_count(),
+                "scan_in_progress": self.scanner.scan_lock.locked(),
             }
             return jsonify(status)
 
-        @self.app.route('/es5/<path:filename>')
+        @self.app.route("/es5/<path:filename>")
         def serve_es5_files(filename):
             es5_dir = "/storage/emulated/0/1/answers/es5"
             try:
@@ -1089,18 +1143,23 @@ class WebService:
             except FileNotFoundError:
                 return "File not found", 404
 
-    def run(self, host='0.0.0.0', port=8001):
+    def run(self, host="0.0.0.0", port=8001):
         self.app.run(host=host, port=port, debug=False)
 
 
 # ============================================================================
 # 主程序
 # ============================================================================
-CONFIG_FILE = "/storage/emulated/0/1/program/获取答案/config.json"
-DATABASE_PATH = "/storage/emulated/0/xuehai/5210/databases/com.xh.acldstu/1364978/xh_yunzuoye.db"
+CONFIG_FILE = "/storage/emulated/0/1/program/works/config.json"
+DATABASE_PATH = (
+    "/storage/emulated/0/xuehai/5210/databases/com.xh.acldstu/1364978/xh_yunzuoye.db"
+)
 FILE_BASE_DIR = "/storage/emulated/0/xuehai/5210/filebases/com.xh.acldstu/1364978/"
-OUTPUT_BASE_DIR = "/storage/emulated/0/1/answers"
-DETAIL_VERSION = 1
+OUTPUT_BASE_DIR = "/storage/emulated/0/1/works/"
+DETAIL_VERSION = 2
+EXPIRE_TEMP_TOKEN = 900
+EXPIRE_VERIFY = 120
+
 
 def main():
     logger = Logger()
@@ -1110,8 +1169,11 @@ def main():
     data_manager = DataManager(OUTPUT_BASE_DIR)
     db_extractor = DatabaseExtractor(DATABASE_PATH, FILE_BASE_DIR, data_manager, logger)
     work_processor = WorkFileProcessor(FILE_BASE_DIR, logger, db_extractor)
-    scanner = Scanner(config_manager, data_manager, db_extractor, work_processor, logger)
-    web_service = WebService(scanner, config_manager, data_manager)
+    scanner = Scanner(
+        config_manager, data_manager, db_extractor, work_processor, logger
+    )
+    author = Author(logger, data_manager)
+    web_service = WebService(scanner, config_manager, data_manager, author)
 
     logger.success("系统初始化完成")
     logger.clear_action()
@@ -1121,9 +1183,15 @@ def main():
     scan_thread = threading.Thread(target=scanner.start_scan_loop, daemon=True)
     scan_thread.start()
 
-    print(f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}")
-    print(f"{Logger.Colors.SUCCESS}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 服务器启动，地址：http://localhost:8001{Logger.Colors.RESET}")
-    print(f"{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 检查间隔：{config_manager.get_check_interval()}秒{Logger.Colors.RESET}")
+    print(
+        f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}"
+    )
+    print(
+        f"{Logger.Colors.SUCCESS}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 服务器启动，地址：http://localhost:8001{Logger.Colors.RESET}"
+    )
+    print(
+        f"{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 检查间隔：{config_manager.get_check_interval()}秒{Logger.Colors.RESET}"
+    )
 
     web_service.run()
 
