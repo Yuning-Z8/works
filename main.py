@@ -16,10 +16,11 @@ import sqlite3
 import atexit
 import uuid
 import secrets
+import urllib.request
 from functools import wraps
 from datetime import datetime
-from typing import Any, Dict, Set, List, Tuple, Optional, Union
-from flask import Flask, render_template, jsonify, request, send_from_directory
+from typing import Any, Dict, Set, List, Tuple, Optional
+from flask import Flask, render_template, jsonify, request
 
 
 # ============================================================================
@@ -45,13 +46,13 @@ class Logger:
         else:
             self.debug = lambda _: None
 
-    def set_action(self, action):
+    def set_action(self, action: str):
         self.current_action = action
 
     def clear_action(self):
         self.current_action = ""
 
-    def _format_message(self, level, message):
+    def _format_message(self, level: str, message: str):
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         level_color = getattr(self.Colors, level.upper(), self.Colors.INFO)
         if self.current_action:
@@ -325,7 +326,7 @@ class DataManager:
             min_connections=1,
             max_connections=10,
             idle_timeout=600,
-            check_interval=60,
+            check_interval=3600,
         )
 
     # -------------------- 元数据批量操作 --------------------
@@ -604,7 +605,7 @@ class DatabaseExtractor:
                 all_works = []
                 now_ms = int(time.time() * 1000)
 
-                if no_url_set:
+                if False and no_url_set:  # test
                     placeholders = ",".join(["?"] * len(no_url_set))
                     query = f"""
                     SELECT WORK_ID, CONTENT_URL, NAME, SUBJECT,
@@ -657,17 +658,15 @@ class DatabaseExtractor:
                             if now_ms > max(upto_time, end_time):
                                 continue
                             no_url_set.add(work_id)
-                            file_name = "no_file"
                             no_url = True
                         else:
-                            file_name = content_url[-36:-4]
                             no_url = False
 
                         is_exam = upto_time == 0 and start_time != 0 and end_time != 0
                         work = {
                             "work_id": work_id,
                             "has_content": not no_url,
-                            "file_name": file_name,
+                            "content_url": content_url,
                             "month_str": datetime.fromtimestamp(
                                 create_time // 1000
                             ).strftime("%Y%m"),
@@ -706,28 +705,27 @@ class DatabaseExtractor:
 
 
 class WorkFileProcessor:
-    def __init__(self, file_base_dir, logger: Logger, db_extractor: DatabaseExtractor):
-        self.file_base_dir = file_base_dir
+    def __init__(self, logger: Logger, db_extractor: DatabaseExtractor):
         self.logger = logger
         self.db_extractor = db_extractor
 
     def process(self, work: dict):
-        file_path = os.path.join(
-            self.file_base_dir, work["month_str"], work["file_name"] + ".txt"
-        )
-        if not os.path.exists(file_path):
-            self.logger.warning(f"文件不存在：{file_path}")
+        content_url = work.get("content_url")
+        if not content_url:
+            self.logger.warning(f"作业无内容URL：{work['work_name']}")
             return None
 
         self.logger.info(f"开始处理 {work['work_name']}")
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            req = urllib.request.Request(content_url)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read().decode("utf-8")
+            data = json.loads(raw)
         except json.JSONDecodeError:
-            self.logger.error(f"无效JSON：{file_path}")
+            self.logger.error(f"无效JSON：{content_url}")
             return None
         except Exception as e:
-            self.logger.error(f"读取失败：{str(e)}")
+            self.logger.error(f"请求失败：{str(e)}")
             return None
 
         work_details = self._extract_work_details(data, work)
@@ -1109,7 +1107,7 @@ class WebService:
             return jsonify(data)
 
         @self.app.route("/api/scan", methods=["POST"])
-        @self._require_auth
+        # @self._require_auth
         def trigger_scan():
             if self.scanner.scan_lock.locked():
                 return jsonify({"status": "error", "message": "扫描正在进行中"})
@@ -1121,7 +1119,7 @@ class WebService:
             return jsonify(self.config_manager.config)
 
         @self.app.route("/api/config/reload", methods=["POST"])
-        @self._require_auth
+        # @self._require_auth
         def reload_config():
             self.config_manager.load()
             return jsonify({"status": "success", "message": "配置已重新加载"})
@@ -1134,14 +1132,6 @@ class WebService:
                 "scan_in_progress": self.scanner.scan_lock.locked(),
             }
             return jsonify(status)
-
-        @self.app.route("/es5/<path:filename>")
-        def serve_es5_files(filename):
-            es5_dir = "/storage/emulated/0/1/answers/es5"
-            try:
-                return send_from_directory(es5_dir, filename)
-            except FileNotFoundError:
-                return "File not found", 404
 
     def run(self, host="0.0.0.0", port=8001):
         self.app.run(host=host, port=port, debug=False)
@@ -1168,7 +1158,7 @@ def main():
     config_manager = ConfigManager(CONFIG_FILE, logger)
     data_manager = DataManager(OUTPUT_BASE_DIR)
     db_extractor = DatabaseExtractor(DATABASE_PATH, FILE_BASE_DIR, data_manager, logger)
-    work_processor = WorkFileProcessor(FILE_BASE_DIR, logger, db_extractor)
+    work_processor = WorkFileProcessor(logger, db_extractor)
     scanner = Scanner(
         config_manager, data_manager, db_extractor, work_processor, logger
     )

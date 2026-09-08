@@ -424,6 +424,24 @@
             return `${prefix}-${answerIdCounter++}`;
         }
 
+        // 白名单内的真实HTML标签，其余 <xxx> 一律转义，防止代码片段（如 j<len(s) and s[j]>) 被当成标签吞掉
+        const SAFE_TAG_RE = /<\/?(?:p|br|hr|img|sub|sup|span|div|table|thead|tbody|tr|td|th|strong|em|i|b|u|s|ol|ul|li|h[1-6]|blockquote|code|pre|font|a|center|small|big|figure|figcaption|answer)\b(?:\s[^<>]*)?\/?>/gi;
+
+        function sanitizeStemHtml(html) {
+            if (!html) return '';
+            const str = String(html);
+            let out = '';
+            let last = 0;
+            str.replace(SAFE_TAG_RE, (match, offset) => {
+                out += str.slice(last, offset).replace(/</g, '&lt;');
+                out += match;
+                last = offset + match.length;
+                return match;
+            });
+            out += str.slice(last).replace(/</g, '&lt;');
+            return out;
+        }
+
         // 现代剪贴板 API + 降级
         async function copyAnswer(elementId) {
             const element = document.getElementById(elementId);
@@ -510,18 +528,18 @@
                 let qNum = 0;
                 workData.questions.forEach(question => {
                     if (question.question_type === "分割线") {
-                        bodyHtml += `<div class="divider-section"><div class="divider-content">${question.stem_content || '---'}</div></div>`;
+                        bodyHtml += `<div class="divider-section"><div class="divider-content">${sanitizeStemHtml(question.stem_content) || '---'}</div></div>`;
                         return;
                     }
                     qNum++;
                     question.question_number = qNum;
-                    const stem = question.stem_content || '';
+                    const stem = sanitizeStemHtml(question.stem_content || '');
                     bodyHtml += `<section class="question" style="border-left-color: ${mainColor};">
                         <div class="question-number">第${qNum}题:${question.question_type ? `<span class="question-type">${question.question_type}</span>` : ''}</div>
                         <div class="stem">${stem}</div>`;
                     if (question.answers && question.answers.length) {
                         bodyHtml += '<div class="separate-answer"><div class="separate-answer-title">答案:</div>';
-                        question.answers.forEach(ans => bodyHtml += `<span class="answer-text">${ans}</span> `);
+                        question.answers.forEach(ans => bodyHtml += `<span class="answer-text">${sanitizeStemHtml(ans)}</span> `);
                         bodyHtml += '</div>';
                     }
                     if (question.sub_questions && question.sub_questions.length) {
@@ -529,15 +547,15 @@
                         let subIdx = 1;
                         question.sub_questions.forEach(sub => {
                             if (sub.question_type === "分割线") {
-                                bodyHtml += `<div class="divider-section"><div class="divider-content">${sub.stem_content || '---'}</div></div>`;
+                                bodyHtml += `<div class="divider-section"><div class="divider-content">${sanitizeStemHtml(sub.stem_content) || '---'}</div></div>`;
                                 return;
                             }
                             bodyHtml += `<li class="sub-question-item"><div class="sub-question-content">
                                 <div class="sub-question-number">${qNum}.${subIdx}:${sub.question_type ? `<span class="sub-question-type">${sub.question_type}</span>` : ''}</div>
-                                <div class="stem">${sub.stem_content || ''}</div>`;
+                                <div class="stem">${sanitizeStemHtml(sub.stem_content || '')}</div>`;
                             if (sub.answers && sub.answers.length) {
                                 bodyHtml += '<div class="separate-answer"><div class="separate-answer-title">答案:</div>';
-                                sub.answers.forEach(ans => bodyHtml += `<span class="answer-text">${ans}</span> `);
+                                sub.answers.forEach(ans => bodyHtml += `<span class="answer-text">${sanitizeStemHtml(ans)}</span> `);
                                 bodyHtml += '</div>';
                             }
                             bodyHtml += '</div></li>';
@@ -555,7 +573,7 @@ ${baseStyles}
 </head>
 <body style="max-width:850px;margin:20px auto;padding:0 15px;background:#f5f5f5;">
 ${bodyHtml}
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"><\/script>
+<script id="MathJax-script" async src="${location.protocol}//${location.hostname}:8000/lib/js/es5/tex-mml-chtml.js"><\/script>
 </body>
 </html>`;
         }
@@ -667,7 +685,7 @@ ${bodyHtml}
 
         // ---------- 渲染逻辑 ----------
         function replaceAnswerTags(question) {
-            let stemContent = question.stem_content || '';
+            let stemContent = sanitizeStemHtml(question.stem_content || '');
             if (!question.answers || !question.answers.length) return { stemContent, hasAnswerTags: false };
             const answers = question.answers;
             const regex = /<answer>(\d+)<\/answer>/g;
@@ -676,7 +694,7 @@ ${bodyHtml}
                 hasAnswerTags = true;
                 const idx = parseInt(indexStr);
                 if (idx < answers.length) {
-                    const answerText = answers[idx];
+                    const answerText = sanitizeStemHtml(answers[idx]);
                     const uniqueId = generateUniqueId('inline-answer');
                     if (answers.length > 1) {
                         return `<span class="answer-container"><button class="copy-btn" onclick="copyAnswer('${uniqueId}')" title="复制答案" data-original-text="${idx+1}" aria-label="复制答案 ${idx+1}">${idx+1}</button><span class="answer-text" id="${uniqueId}">${answerText}</span></span>`;
@@ -700,11 +718,11 @@ ${bodyHtml}
                 html += `<div class="answer-container"><button class="copy-btn" onclick="copyAnswer('${id}')" title="复制答案" aria-label="复制答案">
                     <svg class="copy-icon" width="12" height="12" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="6" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
                     <svg class="check-icon" width="12" height="12" viewBox="0 0 16 16" style="display: none;"><path d="M3 8L6 11L13 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </button><span class="answer-text" id="${id}">${answers[0]}</span></div>`;
+                    </button><span class="answer-text" id="${id}">${sanitizeStemHtml(answers[0])}</span></div>`;
             } else {
                 answers.forEach((ans, idx) => {
                     const id = generateUniqueId(`answer-${questionIdPrefix}-${idx}`);
-                    html += `<div class="blank-answer"><button class="copy-btn" onclick="copyAnswer('${id}')" title="复制答案" data-original-text="${idx+1}" aria-label="复制答案 ${idx+1}">${idx+1}</button><span class="answer-text" id="${id}">${ans}</span></div>`;
+                    html += `<div class="blank-answer"><button class="copy-btn" onclick="copyAnswer('${id}')" title="复制答案" data-original-text="${idx+1}" aria-label="复制答案 ${idx+1}">${idx+1}</button><span class="answer-text" id="${id}">${sanitizeStemHtml(ans)}</span></div>`;
                 });
             }
             html += '</div>';
@@ -713,7 +731,7 @@ ${bodyHtml}
 
         function renderExplanation(explainContent) {
             if (!explainContent || explainContent.trim() === '' || explainContent.trim() === '<p>无</p>') return '';
-            return `<details class="explanation" onToggle="toggleExplanation(this)"><summary>展开解析</summary><div>${explainContent}</div></details>`;
+            return `<details class="explanation" onToggle="toggleExplanation(this)"><summary>展开解析</summary><div>${sanitizeStemHtml(explainContent)}</div></details>`;
         }
 
         function renderSubQuestions(subQuestions, parentNumber, mainColor) {
@@ -722,7 +740,7 @@ ${bodyHtml}
             let subIdx = 1;
             subQuestions.forEach(sub => {
                 if (sub.question_type === "分割线") {
-                    html += `<div class="divider-section" style="margin:10px 0;"><div class="divider-content">${sub.stem_content || '---'}</div></div>`;
+                    html += `<div class="divider-section" style="margin:10px 0;"><div class="divider-content">${sanitizeStemHtml(sub.stem_content) || '---'}</div></div>`;
                     return;
                 }
                 const { stemContent, hasAnswerTags } = replaceAnswerTags(sub);
@@ -766,7 +784,7 @@ ${bodyHtml}
                     let qNum = 0;
                     workData.questions.forEach(question => {
                         if (question.question_type === "分割线") {
-                            fragments.push(`<div class="divider-section"><div class="divider-content">${question.stem_content || '---'}</div></div>`);
+                            fragments.push(`<div class="divider-section"><div class="divider-content">${sanitizeStemHtml(question.stem_content) || '---'}</div></div>`);
                             return;
                         }
                         qNum++;
@@ -801,7 +819,7 @@ ${bodyHtml}
                 config.textContent = `window.MathJax = {tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],['\\\\[','\\\\]']],packages:{'[+]':['ams','boldsymbol','amsmath']}},svg:{fontCache:'global'},startup:{pageReady:function(){return MathJax.startup.defaultPageReady().then(function(){MathJax.typesetPromise&&MathJax.typesetPromise().then(resolve);});}}};`;
                 document.head.appendChild(config);
                 const script = document.createElement('script');
-                script.src = '/es5/tex-mml-chtml.js';
+                script.src = location.protocol + '//' + location.hostname + ':8000/lib/js/es5/tex-mml-chtml.js';
                 script.id = 'MathJax-script';
                 script.async = true;
                 script.onload = () => {
