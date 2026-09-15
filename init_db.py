@@ -5,7 +5,7 @@
 import os
 import sqlite3
 
-OUTPUT_BASE_DIR = "/storage/emulated/0/1/works/"
+OUTPUT_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(OUTPUT_BASE_DIR, "metadata.db")
 
 

@@ -1230,7 +1230,7 @@ DATABASE_PATH = (
     "/storage/emulated/0/xuehai/5210/databases/com.xh.acldstu/1364978/xh_yunzuoye.db"
 )
 FILE_BASE_DIR = "/storage/emulated/0/xuehai/5210/filebases/com.xh.acldstu/1364978/"
-OUTPUT_BASE_DIR = "/storage/emulated/0/1/works/"
+OUTPUT_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DETAIL_VERSION = 2
 EXPIRE_TEMP_TOKEN = 900
 EXPIRE_VERIFY = 120
