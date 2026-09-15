@@ -339,18 +339,18 @@ class DataManager:
                 conn.executemany(
                     """
                     INSERT OR REPLACE INTO works_info 
-                    (work_id, work_name, subject_id, start_time, upto_time, is_exam, has_content)
+                    (uuid, work_name, subject_id, has_content, is_exam, start_at, end_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                     [
                         (
-                            w["work_id"],
+                            w["uuid"],
                             w["work_name"],
                             w["subject_id"],
-                            w["start_time"],
-                            w["upto_time"],
-                            1 if w["is_exam"] else 0,
                             1 if w["has_content"] else 0,
+                            1 if w["is_exam"] else 0,
+                            w["start_at"],
+                            w["end_at"],
                         )
                         for w in works_list
                     ],
@@ -360,7 +360,39 @@ class DataManager:
                 conn.rollback()
                 raise
 
-    def batch_save_work_details(self, details_list: List[Tuple[str, Dict]]) -> None:
+    def load_started_exams(self, timestamp) -> Set[str]:
+        """返回 start_at 已到达（start_at <= timestamp）的待补充 URL 作业 uuid"""
+        with self.pool.connection() as conn:
+            cursor = conn.execute(
+                "SELECT uuid FROM wait_url WHERE start_at <= ?", (timestamp,)
+            )
+            return {row["uuid"] for row in cursor.fetchall()}
+
+    def add_wait_url_works(self, wait_list: List[Tuple[str, int]]) -> None:
+        """登记等待补充 URL 的作业（uuid, start_at）"""
+        if not wait_list:
+            return
+        with self.pool.connection() as conn:
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO wait_url (uuid, start_at) VALUES (?, ?)",
+                    wait_list,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def remove_wait_url_work(self, work_id: str) -> None:
+        with self.pool.connection() as conn:
+            conn.execute("DELETE FROM wait_url WHERE uuid = ?", (work_id,))
+            conn.commit()
+
+    def batch_save_work_details_meta(
+        self, details_list: List[Tuple[str, str]]
+    ) -> None:
+        """仅登记作业详情的 URL（延迟到访问时再抓取正文）"""
         if not details_list:
             return
         with self.pool.connection() as conn:
@@ -368,16 +400,26 @@ class DataManager:
             try:
                 conn.executemany(
                     """
-                    INSERT OR REPLACE INTO work_details (work_id, version, detail_json)
+                    INSERT OR IGNORE INTO work_details (uuid, url, version)
                     VALUES (?, ?, ?)
                 """,
                     [
-                        (
-                            work_id,
-                            DETAIL_VERSION,
-                            json.dumps(details, ensure_ascii=False),
-                        )
-                        for work_id, details in details_list
+                        (work_id, content_url, DETAIL_VERSION)
+                        for work_id, content_url in details_list
+                    ],
+                )
+                # URL 变更时作废旧详情，URL 未变则保留已抓取的详情
+                conn.executemany(
+                    """
+                    UPDATE work_details
+                    SET detail = CASE WHEN url = ? THEN detail ELSE NULL END,
+                        url = ?,
+                        version = ?
+                    WHERE uuid = ?
+                """,
+                    [
+                        (content_url, content_url, DETAIL_VERSION, work_id)
+                        for work_id, content_url in details_list
                     ],
                 )
                 conn.commit()
@@ -385,26 +427,29 @@ class DataManager:
                 conn.rollback()
                 raise
 
-    def load_no_content_url_records(self) -> Set[str]:
-        with self.pool.connection() as conn:
-            cursor = conn.execute("SELECT work_id FROM no_content_url")
-            return {row["work_id"] for row in cursor.fetchall()}
-
-    def batch_update_no_content_url(self, current_set: Set[str]) -> None:
-        """用当前集合完全替换 no_content_url 表"""
-        with self.pool.connection() as conn:
-            conn.execute("BEGIN TRANSACTION")
-            try:
-                conn.execute("DELETE FROM no_content_url")
-                if current_set:
-                    conn.executemany(
-                        "INSERT INTO no_content_url (work_id) VALUES (?)",
-                        [(wid,) for wid in current_set],
-                    )
+    def save_work_detail(self, work_id: str, details: Any) -> bool:
+        """保存抓取到的作业详情正文"""
+        if isinstance(details, (dict, list)):
+            detail = json.dumps(details, ensure_ascii=False)
+        else:
+            detail = details
+        try:
+            with self.pool.connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO work_details (uuid, version, detail)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(uuid) DO UPDATE SET
+                        version = excluded.version,
+                        detail = excluded.detail
+                """,
+                    (work_id, DETAIL_VERSION, detail),
+                )
                 conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
+            return True
+        except Exception as e:
+            print(f"保存作业详情失败 {work_id}: {e}")
+            return False
 
     def load_last_scan_time(self) -> int:
         with self.pool.connection() as conn:
@@ -413,7 +458,7 @@ class DataManager:
             ).fetchone()
             if row:
                 return row["scan_time"]
-            return 1765400000000  # 2025-12-10 00:00:00
+            return 0
 
     def save_last_scan_time(self, scan_time: int) -> None:
         with self.pool.connection() as conn:
@@ -425,15 +470,22 @@ class DataManager:
 
     # -------------------- 查询操作 --------------------
     def get_works_by_date(self, date_str: str) -> List[Dict[str, Any]]:
+        """date_str 为 YYYYMMDD，返回前端接口字段（work_id/start_time/upto_time）"""
+        if len(date_str) != 8 or not date_str.isdigit():
+            return []
+        month_str = f"{date_str[:4]}-{date_str[4:6]}"
+        day_str = date_str[6:8]
         with self.pool.connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT work_id, work_name, subject_id, start_time, upto_time, is_exam, has_content
+                SELECT uuid AS work_id, work_name, subject_id,
+                       start_at AS start_time, end_at AS upto_time,
+                       is_exam, has_content
                 FROM works_info
-                WHERE work_date = ?
-                ORDER BY start_time DESC
+                WHERE month_str = ? AND date_str = ?
+                ORDER BY start_at DESC
             """,
-                (date_str,),
+                (month_str, day_str),
             )
             rows = cursor.fetchall()
             return [
@@ -452,24 +504,36 @@ class DataManager:
     def get_works_counts_by_months(
         self, months: List[str]
     ) -> Dict[str, Dict[str, int]]:
+        """months 为 YYYYMM 列表，返回 {YYYYMM: {YYYY-MM-DD: count}}"""
         if not months:
             return {}
-        placeholders = ",".join(["?"] * len(months))
+        query_months = []
+        month_map = {}
+        for month in months:
+            if len(month) != 6 or not month.isdigit():
+                continue
+            query_month = f"{month[:4]}-{month[4:6]}"
+            query_months.append(query_month)
+            month_map[query_month] = month
+        result = {month: {} for month in months}
+        if not query_months:
+            return result
+        placeholders = ",".join(["?"] * len(query_months))
         sql = f"""
-            SELECT month_str, work_date, COUNT(*) as cnt
+            SELECT month_str, date_str, COUNT(*) as cnt
             FROM works_info
             WHERE month_str IN ({placeholders})
-            GROUP BY month_str, work_date
+            GROUP BY month_str, date_str
         """
         with self.pool.connection() as conn:
-            cursor = conn.execute(sql, months)
+            cursor = conn.execute(sql, query_months)
             rows = cursor.fetchall()
-        result = {month: {} for month in months}
         for row in rows:
-            month_str = row["month_str"]
-            work_date = row["work_date"]
-            formatted = f"{work_date[:4]}-{work_date[4:6]}-{work_date[6:8]}"
-            result[month_str][formatted] = row["cnt"]
+            month = month_map.get(row["month_str"])
+            if not month:
+                continue
+            formatted = f'{row["month_str"]}-{row["date_str"]}'
+            result[month][formatted] = row["cnt"]
         return result
 
     def get_total_works_count(self) -> int:
@@ -477,51 +541,45 @@ class DataManager:
             row = conn.execute("SELECT COUNT(*) as cnt FROM works_info").fetchone()
             return row["cnt"] if row else 0
 
-    def load_work_details(self, work_id: str) -> Optional[Dict]:
+    def get_work_meta(self, work_id: str) -> Optional[Dict[str, Any]]:
         with self.pool.connection() as conn:
             row = conn.execute(
-                "SELECT version, detail_json FROM work_details WHERE work_id = ?",
+                """
+                SELECT uuid AS work_id, work_name, subject_id,
+                       start_at AS start_time, end_at AS upto_time,
+                       is_exam, has_content
+                FROM works_info
+                WHERE uuid = ?
+            """,
                 (work_id,),
             ).fetchone()
             if not row:
                 return None
-            version = row["version"]
-            details = json.loads(row["detail_json"])
-            migrated = self._migrate_work_details(details, version)
-            if migrated.get("version") != version:
-                self.save_work_details(work_id, migrated)  # 回写迁移后的版本
-                return migrated
-            return details
+            return {
+                "work_id": row["work_id"],
+                "work_name": row["work_name"],
+                "subject_id": row["subject_id"],
+                "start_time": row["start_time"],
+                "upto_time": row["upto_time"],
+                "is_exam": bool(row["is_exam"]),
+                "has_content": bool(row["has_content"]),
+            }
 
-    @staticmethod
-    def _migrate_work_details(details: Dict, current_version: int) -> Dict:
-        LATEST_VERSION = 2
-        if current_version >= LATEST_VERSION:
-            return details
-        if current_version == 1:
-            details["version"] = 2
-            if "detail" not in details:
-                details["detail"] = {}
-        return details
-
-    def save_work_details(self, work_id: str, details: Dict) -> bool:
-        if "version" not in details:
-            details["version"] = 1
-        detail_json = json.dumps(details, ensure_ascii=False)
-        try:
-            with self.pool.connection() as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO work_details (work_id, version, detail_json)
-                    VALUES (?, ?, ?)
-                """,
-                    (work_id, details["version"], detail_json),
-                )
-                conn.commit()
-            return True
-        except Exception as e:
-            print(f"保存作业详情失败 {work_id}: {e}")
-            return False
+    def get_work_detail(self, work_id: str) -> Optional[Dict[str, Any]]:
+        """返回 {url, version, questions}，questions 为 None 表示尚未抓取"""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT url, version, detail FROM work_details WHERE uuid = ?",
+                (work_id,),
+            ).fetchone()
+            if not row:
+                return None
+            detail = row["detail"]
+            return {
+                "url": row["url"],
+                "version": row["version"],
+                "questions": json.loads(detail) if detail else None,
+            }
 
     # -------------------- 鉴权令牌管理 --------------------
     def load_permanent_tokens(self) -> Dict[str, Dict]:
@@ -591,40 +649,65 @@ class DatabaseExtractor:
         finally:
             self.logger.clear_action()
 
-    def extract_work_info(self) -> List[dict]:
+    def extract_work_info(self):
+        """
+        扫描源数据库，返回 (all_works, details_list, wait_list, resolved_wait)
+
+        - all_works: 本次发现的作业元数据
+        - details_list: [(uuid, content_url)] 需要延迟抓取详情的作业
+        - wait_list: [(uuid, start_at)] 尚无 URL、等待考试开始后重试的作业
+        - resolved_wait: 已获得 URL 或已过期、需要从等待表移除的 uuid
+        """
+        empty = ([], [], [], [])
         try:
             if not os.path.exists(self.db_path):
                 self.logger.error(f"数据库文件不存在：{self.db_path}")
-                return []
+                return empty
             conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            no_url_set = self.data_manager.load_no_content_url_records()
-            last_scan_ts = self.data_manager.load_last_scan_time()
-            latest_scan_ts = last_scan_ts
             try:
                 cursor = conn.cursor()
-                all_works = []
                 now_ms = int(time.time() * 1000)
+                last_scan_ts = self.data_manager.load_last_scan_time()
+                started_exams = self.data_manager.load_started_exams(now_ms)
 
-                if False and no_url_set:  # test
-                    placeholders = ",".join(["?"] * len(no_url_set))
-                    query = f"""
-                    SELECT WORK_ID, CONTENT_URL, NAME, SUBJECT,
-                           CREATE_TIME, UPTO_TIME, START_TIME, END_TIME, UPDATE_TIME
-                    FROM xh_yzy_student_work_list 
-                    WHERE UPDATE_TIME > ? OR WORK_ID IN ({placeholders})
-                    """
-                    params = (last_scan_ts,) + tuple(no_url_set)
-                else:
-                    query = """
-                    SELECT WORK_ID, CONTENT_URL, NAME, SUBJECT,
-                           CREATE_TIME, UPTO_TIME, START_TIME, END_TIME, UPDATE_TIME
+                all_works = []
+                details_list = []
+                wait_list = []
+                resolved_wait = []
+                seen = set()
+
+                columns = (
+                    "WORK_ID, CONTENT_URL, NAME, SUBJECT, "
+                    "CREATE_TIME, UPTO_TIME, START_TIME, END_TIME, UPDATE_TIME"
+                )
+
+                cursor.execute(
+                    f"""
+                    SELECT {columns}
                     FROM xh_yzy_student_work_list 
                     WHERE UPDATE_TIME > ?
-                    """
-                    params = (last_scan_ts,)
+                    """,
+                    (last_scan_ts,),
+                )
+                rows = list(cursor.fetchall())
+                for row in rows:
+                    seen.add(row[0])
 
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
+                if started_exams:
+                    placeholders = ",".join(["?"] * len(started_exams))
+                    cursor.execute(
+                        f"""
+                        SELECT {columns}
+                        FROM xh_yzy_student_work_list 
+                        WHERE WORK_ID IN ({placeholders})
+                        """,
+                        tuple(started_exams),
+                    )
+                    for row in cursor.fetchall():
+                        if row[0] not in seen:
+                            rows.append(row)
+                            seen.add(row[0])
+
                 self.logger.info(f"找到{len(rows)}条作业记录")
 
                 for row in rows:
@@ -641,64 +724,58 @@ class DatabaseExtractor:
                             update_time,
                         ) = row
 
-                        if work_id in no_url_set:
-                            if content_url:
-                                no_url_set.remove(work_id)
+                        has_url = bool(content_url)
+                        is_exam = (
+                            upto_time == 0 and start_time != 0 and end_time != 0
+                        )
+                        expired = bool(end_time) and now_ms > end_time
+
+                        if work_id in started_exams:
+                            if has_url:
+                                resolved_wait.append(work_id)
                                 self.logger.info(
                                     f"{work_name} (科目: {subject_id}) 新增URL"
                                 )
-                            elif now_ms > max(upto_time, end_time):
-                                no_url_set.remove(work_id)
+                            elif expired:
+                                resolved_wait.append(work_id)
                                 self.logger.info(f"移除过期无内容作业: {work_name}")
                                 continue
-                            else:
-                                continue
 
-                        if not content_url:
-                            if now_ms > max(upto_time, end_time):
-                                continue
-                            no_url_set.add(work_id)
-                            no_url = True
-                        else:
-                            no_url = False
+                        if has_url:
+                            details_list.append((work_id, content_url))
+                        elif is_exam and not expired:
+                            wait_list.append(
+                                (work_id, start_time if start_time else now_ms)
+                            )
 
-                        is_exam = upto_time == 0 and start_time != 0 and end_time != 0
-                        work = {
-                            "work_id": work_id,
-                            "has_content": not no_url,
-                            "content_url": content_url,
-                            "month_str": datetime.fromtimestamp(
-                                create_time // 1000
-                            ).strftime("%Y%m"),
-                            "work_name": work_name,
-                            "subject_id": subject_id,
-                            "is_exam": is_exam,
-                            "start_time": start_time if is_exam else create_time,
-                            "upto_time": end_time if is_exam else upto_time,
-                        }
-                        all_works.append(work)
-                        self.logger.info(
-                            f"发现{'无URL' if no_url else ''}{'考试' if is_exam else '作业'} {work_name} (科目: {subject_id})"
+                        all_works.append(
+                            {
+                                "uuid": work_id,
+                                "work_name": work_name,
+                                "subject_id": subject_id,
+                                "has_content": has_url,
+                                "is_exam": is_exam,
+                                "start_at": start_time if is_exam else create_time,
+                                "end_at": end_time if is_exam else upto_time,
+                            }
                         )
-
-                        if update_time > latest_scan_ts:
-                            latest_scan_ts = update_time
+                        self.logger.info(
+                            f"发现{'考试' if is_exam else '作业'} {work_name} (科目: {subject_id})"
+                        )
                     except Exception as e:
                         self.logger.error(f"解析作业记录失败：{str(e)}")
                         continue
 
                 self.logger.success(f"成功提取{len(all_works)}个作业信息")
-                return all_works
+                return all_works, details_list, wait_list, resolved_wait
             finally:
                 conn.close()
-                self.data_manager.batch_update_no_content_url(no_url_set)
-                self.data_manager.save_last_scan_time(latest_scan_ts)
         except sqlite3.Error as e:
             self.logger.error(f"SQLite错误：{str(e)}")
-            return []
+            return empty
         except Exception as e:
             self.logger.error(f"提取失败：{str(e)}")
-            return []
+            return empty
 
     def get_question_type_name(self, type_id):
         return self.question_type_mapping.get(type_id, f"未知类型({type_id})")
@@ -709,13 +786,12 @@ class WorkFileProcessor:
         self.logger = logger
         self.db_extractor = db_extractor
 
-    def process(self, work: dict):
-        content_url = work.get("content_url")
+    def process(self, content_url: str):
+        """按需抓取并解析作业详情，返回题目列表"""
         if not content_url:
-            self.logger.warning(f"作业无内容URL：{work['work_name']}")
             return None
 
-        self.logger.info(f"开始处理 {work['work_name']}")
+        self.logger.info(f"开始抓取作业详情：{content_url}")
         try:
             req = urllib.request.Request(content_url)
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -728,12 +804,12 @@ class WorkFileProcessor:
             self.logger.error(f"请求失败：{str(e)}")
             return None
 
-        work_details = self._extract_work_details(data, work)
-        self.logger.success(f"已提取作业详情：{work['work_name']}")
-        return work_details
+        questions = self._extract_work_details(data)
+        self.logger.success("已提取作业详情")
+        return questions
 
-    def _extract_work_details(self, data, work):
-        work["questions"] = []
+    def _extract_work_details(self, data):
+        questions = []
 
         answers_by_question = {}
         for answer in data.get("questionAnswers", []):
@@ -776,7 +852,7 @@ class WorkFileProcessor:
                     "answers": [],
                     "sub_questions": [],
                 }
-                work["questions"].append(divider_question)
+                questions.append(divider_question)
                 continue
 
             qn += 1
@@ -835,9 +911,9 @@ class WorkFileProcessor:
                     question_data["sub_questions"].append(sub_question_data)
                     sub_qn += 1
 
-            work["questions"].append(question_data)
+            questions.append(question_data)
 
-        return work
+        return questions
 
     def _process_html_content(self, text):
         if not text:
@@ -877,30 +953,25 @@ class Scanner:
 
         try:
             self.logger.set_action("提取数据")
-            works = self.db_extractor.extract_work_info()
-            works_info_batch = []
-            details_batch = []
+            works, details_list, wait_list, resolved_wait = (
+                self.db_extractor.extract_work_info()
+            )
 
-            self.logger.set_action("文件处理")
-            for work in works:
-                # 准备元数据（用于 works_info）
-                works_info_batch.append(work)
-
-                # 如果作业有内容，处理详情
-                if work["has_content"]:
-                    work_details = self.work_processor.process(work)
-                    if work_details:
-                        details_batch.append((work["work_id"], work_details))
-
-            # 批量写入数据库
+            # 批量写入数据库（详情延迟到访问时抓取）
             self.logger.set_action("保存数据")
-            if works_info_batch:
-                self.data_manager.batch_upsert_works_info(works_info_batch)
-                self.logger.info(f"已更新 {len(works_info_batch)} 条作业元数据")
-            if details_batch:
-                self.data_manager.batch_save_work_details(details_batch)
-                self.logger.info(f"已保存 {len(details_batch)} 个作业详情")
+            if works:
+                self.data_manager.batch_upsert_works_info(works)
+                self.logger.info(f"已更新 {len(works)} 条作业元数据")
+            if details_list:
+                self.data_manager.batch_save_work_details_meta(details_list)
+                self.logger.info(f"已登记 {len(details_list)} 个待抓取详情")
+            for work_id in resolved_wait:
+                self.data_manager.remove_wait_url_work(work_id)
+            if wait_list:
+                self.data_manager.add_wait_url_works(wait_list)
+                self.logger.info(f"已登记 {len(wait_list)} 个待补充URL作业")
 
+            self.data_manager.save_last_scan_time(int(time.time() * 1000) - 10)
             self.logger.success("扫描完成")
             self.last_scan_time = int(time.time() - 10)
         except Exception as e:
@@ -1077,14 +1148,28 @@ class WebService:
         # -------------------- 数据API（部分需要鉴权）--------------------
         @self.app.route("/api/work/<work_id>")
         def get_work_details(work_id):
-            work_details = self.data_manager.load_work_details(work_id)
-            if not work_details:
+            work_meta = self.data_manager.get_work_meta(work_id)
+            if not work_meta:
                 return jsonify({"error": "作业不存在"}), 404
-            subject_info = self.config_manager.get_subject_info(
-                work_details.get("subject_id", 0)
+
+            detail = self.data_manager.get_work_detail(work_id)
+            questions = detail.get("questions") if detail else None
+
+            # 延迟处理：首次访问时才抓取正文
+            if questions is None:
+                if not detail or not detail.get("url"):
+                    return jsonify({"error": "该作业暂无内容"}), 404
+                questions = self.scanner.work_processor.process(detail["url"])
+                if questions is None:
+                    return jsonify({"error": "获取作业详情失败"}), 502
+                self.data_manager.save_work_detail(work_id, questions)
+
+            result = dict(work_meta)
+            result["questions"] = questions
+            result["subject_info"] = self.config_manager.get_subject_info(
+                work_meta["subject_id"]
             )
-            work_details["subject_info"] = subject_info
-            return jsonify(work_details)
+            return jsonify(result)
 
         @self.app.route("/api/works")
         def get_works():
