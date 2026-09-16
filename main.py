@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-自动作业提取系统 v8
-使用 SQLite 存储元数据和作业详情
+自动作业提取系统
 """
 
 import json
@@ -21,6 +20,11 @@ from functools import wraps
 from datetime import datetime
 from typing import Any, Dict, Set, List, Tuple, Optional
 from flask import Flask, render_template, jsonify, request
+
+
+def time_ms() -> int:
+    """返回当前时间的毫秒时间戳"""
+    return int(time.time() * 1000)
 
 
 # ============================================================================
@@ -79,6 +83,7 @@ class ConfigManager:
     """配置管理"""
 
     DEFAULT_CONFIG = {
+        "output_dir": "",
         "subject_config": {
             "1": {"name": "语文", "color": "#E67E22", "short": "语"},
             "2": {"name": "数学", "color": "#4D7CFF", "short": "数"},
@@ -89,14 +94,18 @@ class ConfigManager:
             "15": {"name": "信息技术", "color": "#00BCD4", "short": "信"},
             "default": {"name": "未知", "color": "#A0A0A0", "short": "未"},
         },
-        "check_interval": 3600,
+        "check_interval": 3600000,
     }
 
     def __init__(self, config_path: str, logger: Logger):
         self.config_path = config_path
         self.config = self.DEFAULT_CONFIG.copy()
         self.logger = logger
+        self._last_mtime = 0
+        self._watch_thread = None
+        self._running = False
         self.load()
+        self.start_watcher()
 
     def load(self):
         self.logger.set_action("配置")
@@ -105,6 +114,7 @@ class ConfigManager:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     user_config = json.load(f)
                     self._deep_update(self.config, user_config)
+                self._last_mtime = os.path.getmtime(self.config_path)
                 self.logger.success("已加载配置文件")
             else:
                 self.save()
@@ -113,6 +123,35 @@ class ConfigManager:
             self.logger.error(f"加载失败：{str(e)}")
         finally:
             self.logger.clear_action()
+
+    def start_watcher(self):
+        if self._watch_thread is not None:
+            return
+        self._running = True
+        self._watch_thread = threading.Thread(target=self._watch_config_file, daemon=True)
+        self._watch_thread.start()
+        self.logger.info("配置文件监控已启动")
+
+    def stop_watcher(self):
+        self._running = False
+        if self._watch_thread is not None:
+            self._watch_thread.join(timeout=2)
+            self._watch_thread = None
+
+    def _watch_config_file(self):
+        while self._running:
+            time.sleep(2)
+            try:
+                if not os.path.exists(self.config_path):
+                    continue
+                current_mtime = os.path.getmtime(self.config_path)
+                if current_mtime != self._last_mtime:
+                    self.logger.set_action("配置")
+                    self.logger.info("检测到配置文件变化，正在重新加载...")
+                    self.load()
+                    self.logger.clear_action()
+            except Exception as e:
+                self.logger.error(f"监控配置文件失败：{str(e)}")
 
     def save(self):
         self.logger.set_action("配置")
@@ -142,7 +181,12 @@ class ConfigManager:
         )
 
     def get_check_interval(self):
-        return self.config.get("check_interval", 3600)
+        return self.config.get("check_interval", 3600000)
+
+    def get_output_dir(self):
+        return self.config.get("output_dir", "") or os.path.dirname(
+            os.path.abspath(__file__)
+        )
 
 
 # ============================================================================
@@ -178,7 +222,7 @@ class SQLiteConnectionPool:
         # 初始化最小连接数
         for _ in range(min_connections):
             conn = self._create_connection()
-            self._idle_connections.put((conn, time.time()))
+            self._idle_connections.put((conn, time_ms()))
             self._active_count += 1
 
         self._cleaner_thread = None
@@ -195,7 +239,7 @@ class SQLiteConnectionPool:
         self._cleaner_thread.start()
 
     def _clean_idle_connections(self):
-        now = time.time()
+        now = time_ms()
         to_keep = []
         while True:
             try:
@@ -208,7 +252,7 @@ class SQLiteConnectionPool:
             ):
                 to_keep.append((conn, last_used))
             else:
-                if now - last_used < self.idle_timeout:
+                    if now - last_used < self.idle_timeout * 1000:
                     to_keep.append((conn, last_used))
                 else:
                     self._close_connection(conn)
@@ -236,7 +280,7 @@ class SQLiteConnectionPool:
             return False
 
     def get_connection(self) -> sqlite3.Connection:
-        deadline = time.time() + self.timeout
+        deadline = time_ms() + self.timeout * 1000
         with self._condition:
             while True:
                 try:
@@ -254,16 +298,16 @@ class SQLiteConnectionPool:
                             self._active_count -= 1
                         continue
 
-                remaining = deadline - time.time()
+                remaining = deadline - time_ms()
                 if remaining <= 0:
                     raise TimeoutError(f"无法获取数据库连接，超时 {self.timeout} 秒")
-                self._condition.wait(remaining)
+                self._condition.wait(remaining / 1000)
 
     def return_connection(self, conn: sqlite3.Connection):
         if conn is None:
             return
         if self._is_connection_valid(conn):
-            self._idle_connections.put((conn, time.time()))
+            self._idle_connections.put((conn, time_ms()))
         else:
             self._close_connection(conn)
             with self._lock:
@@ -389,10 +433,8 @@ class DataManager:
             conn.execute("DELETE FROM wait_url WHERE uuid = ?", (work_id,))
             conn.commit()
 
-    def batch_save_work_details_meta(
-        self, details_list: List[Tuple[str, str]]
-    ) -> None:
-        """仅登记作业详情的 URL（延迟到访问时再抓取正文）"""
+    def batch_save_work_details_meta(self, details_list: List[Tuple[str, str]]) -> None:
+        """仅登记作业详情的 URL（延迟到访问时再抓取正文），version=0 表示未处理"""
         if not details_list:
             return
         with self.pool.connection() as conn:
@@ -404,21 +446,7 @@ class DataManager:
                     VALUES (?, ?, ?)
                 """,
                     [
-                        (work_id, content_url, DETAIL_VERSION)
-                        for work_id, content_url in details_list
-                    ],
-                )
-                # URL 变更时作废旧详情，URL 未变则保留已抓取的详情
-                conn.executemany(
-                    """
-                    UPDATE work_details
-                    SET detail = CASE WHEN url = ? THEN detail ELSE NULL END,
-                        url = ?,
-                        version = ?
-                    WHERE uuid = ?
-                """,
-                    [
-                        (content_url, content_url, DETAIL_VERSION, work_id)
+                        (work_id, content_url, 0)
                         for work_id, content_url in details_list
                     ],
                 )
@@ -532,7 +560,7 @@ class DataManager:
             month = month_map.get(row["month_str"])
             if not month:
                 continue
-            formatted = f'{row["month_str"]}-{row["date_str"]}'
+            formatted = f"{row['month_str']}-{row['date_str']}"
             result[month][formatted] = row["cnt"]
         return result
 
@@ -596,7 +624,7 @@ class DataManager:
         with self.pool.connection() as conn:
             conn.execute(
                 "INSERT INTO permanent_tokens (token, created_at) VALUES (?, ?)",
-                (token, time.time()),
+                (token, time_ms()),
             )
             conn.commit()
 
@@ -616,11 +644,8 @@ class DataManager:
 
 
 class DatabaseExtractor:
-    def __init__(
-        self, db_path, file_base_dir, data_manager: DataManager, logger: Logger
-    ):
+    def __init__(self, db_path, data_manager: DataManager, logger: Logger):
         self.db_path = db_path
-        self.file_base_dir = file_base_dir
         self.data_manager = data_manager
         self.logger = logger
         self.question_type_mapping = {}
@@ -651,14 +676,15 @@ class DatabaseExtractor:
 
     def extract_work_info(self):
         """
-        扫描源数据库，返回 (all_works, details_list, wait_list, resolved_wait)
+        扫描源数据库，返回 (all_works, details_list, wait_list, resolved_wait, max_update_time)
 
         - all_works: 本次发现的作业元数据
         - details_list: [(uuid, content_url)] 需要延迟抓取详情的作业
         - wait_list: [(uuid, start_at)] 尚无 URL、等待考试开始后重试的作业
         - resolved_wait: 已获得 URL 或已过期、需要从等待表移除的 uuid
+        - max_update_time: 本次扫描到的最大 UPDATE_TIME
         """
-        empty = ([], [], [], [])
+        empty = ([], [], [], [], 0)
         try:
             if not os.path.exists(self.db_path):
                 self.logger.error(f"数据库文件不存在：{self.db_path}")
@@ -666,7 +692,8 @@ class DatabaseExtractor:
             conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
             try:
                 cursor = conn.cursor()
-                now_ms = int(time.time() * 1000)
+                now_ms = time_ms()
+                start_time = time_ms()
                 last_scan_ts = self.data_manager.load_last_scan_time()
                 started_exams = self.data_manager.load_started_exams(now_ms)
 
@@ -675,6 +702,7 @@ class DatabaseExtractor:
                 wait_list = []
                 resolved_wait = []
                 seen = set()
+                max_update_time = 0
 
                 columns = (
                     "WORK_ID, CONTENT_URL, NAME, SUBJECT, "
@@ -724,10 +752,11 @@ class DatabaseExtractor:
                             update_time,
                         ) = row
 
+                        if update_time and update_time > max_update_time:
+                            max_update_time = update_time
+
                         has_url = bool(content_url)
-                        is_exam = (
-                            upto_time == 0 and start_time != 0 and end_time != 0
-                        )
+                        is_exam = upto_time == 0 and start_time != 0 and end_time != 0
                         expired = bool(end_time) and now_ms > end_time
 
                         if work_id in started_exams:
@@ -766,8 +795,16 @@ class DatabaseExtractor:
                         self.logger.error(f"解析作业记录失败：{str(e)}")
                         continue
 
-                self.logger.success(f"成功提取{len(all_works)}个作业信息")
-                return all_works, details_list, wait_list, resolved_wait
+                self.logger.success(
+                    f"成功提取{len(all_works)}个作业信息，用时{(time_ms() - start_time) / 1000:.2f}秒"
+                )
+                return (
+                    all_works,
+                    details_list,
+                    wait_list,
+                    resolved_wait,
+                    max_update_time,
+                )
             finally:
                 conn.close()
         except sqlite3.Error as e:
@@ -943,7 +980,9 @@ class Scanner:
         self.work_processor = work_processor
         self.logger = logger
         self.scan_lock = threading.Lock()
-        self.last_scan_time = 0
+        self.last_scan_time = self.data_manager.load_last_scan_time()
+        self._detail_locks: Dict[str, threading.Lock] = {}
+        self._detail_locks_lock = threading.Lock()
 
     def perform_scan(self):
         if not self.scan_lock.acquire(blocking=False):
@@ -953,7 +992,7 @@ class Scanner:
 
         try:
             self.logger.set_action("提取数据")
-            works, details_list, wait_list, resolved_wait = (
+            works, details_list, wait_list, resolved_wait, max_update_time = (
                 self.db_extractor.extract_work_info()
             )
 
@@ -971,25 +1010,29 @@ class Scanner:
                 self.data_manager.add_wait_url_works(wait_list)
                 self.logger.info(f"已登记 {len(wait_list)} 个待补充URL作业")
 
-            self.data_manager.save_last_scan_time(int(time.time() * 1000) - 10)
+            if max_update_time > 0:
+                self.data_manager.save_last_scan_time(max_update_time)
+                self.last_scan_time = max_update_time
             self.logger.success("扫描完成")
-            self.last_scan_time = int(time.time() - 10)
         except Exception as e:
             self.logger.error(f"执行失败：{str(e)}")
         finally:
             self.scan_lock.release()
             self.logger.clear_action()
 
-    def start_scan_loop(self):
-        self.logger.set_action("扫描循环")
-        while True:
-            try:
-                if not self.scan_lock.locked():
-                    self.perform_scan()
-                time.sleep(self.config_manager.get_check_interval())
-            except Exception as e:
-                self.logger.error(f"错误：{str(e)}")
-                time.sleep(60)
+    def check_and_scan(self):
+        """检查是否需要扫描，若距上次扫描已超过 check_interval 则触发扫描"""
+        if self.scan_lock.locked():
+            return
+        now = time_ms()
+        if now - self.last_scan_time >= self.config_manager.get_check_interval():
+            threading.Thread(target=self.perform_scan, daemon=True).start()
+
+    def get_detail_lock(self, work_id: str) -> threading.Lock:
+        with self._detail_locks_lock:
+            if work_id not in self._detail_locks:
+                self._detail_locks[work_id] = threading.Lock()
+            return self._detail_locks[work_id]
 
 
 # ============================================================================
@@ -1014,7 +1057,7 @@ class Author:
                 return False
             if self.tokens[token] is None:
                 return True
-            time_now = time.time()
+            time_now = time_ms()
             if self.tokens[token] > time_now:
                 self.tokens[token] = time_now + EXPIRE_TEMP_TOKEN
                 return True
@@ -1025,7 +1068,7 @@ class Author:
     def create_code(self, permanent: bool, info: str):
         code = self._generate_verification_code()
         code_id = str(uuid.uuid4())
-        expire = time.time() + EXPIRE_VERIFY
+        expire = time_ms() + EXPIRE_VERIFY
         with self.auth_lock:
             self.verification_codes[code_id] = (code, permanent, expire)
         self.logger.info(
@@ -1037,7 +1080,7 @@ class Author:
         with self.auth_lock:
             if code_id not in self.verification_codes:
                 return False
-            if self.verification_codes[code_id][2] < time.time():
+            if self.verification_codes[code_id][2] < time_ms():
                 del self.verification_codes[code_id]
                 return False
             if verify_code != self.verification_codes[code_id][0]:
@@ -1048,13 +1091,13 @@ class Author:
                 self.data_manager.save_permanent_token(token)
                 self.logger.info(f"创建了一个永久令牌 {token}")
             else:
-                self.tokens[token] = time.time() + EXPIRE_TEMP_TOKEN
+                self.tokens[token] = time_ms() + EXPIRE_TEMP_TOKEN
                 self.logger.info(f"创建了一个临时令牌 {token}")
             del self.verification_codes[code_id]
             return token
 
     def _clean(self):
-        now = time.time()
+        now = time_ms()
         with self.auth_lock:
             pass
 
@@ -1136,7 +1179,7 @@ class WebService:
                 return jsonify({"error": "验证码错误"}), 400
             return jsonify({"token": token})
 
-        # -------------------- 原有页面路由 --------------------
+        # -------------------- 页面路由 --------------------
         @self.app.route("/")
         def main_page():
             return render_template("main_page.html")
@@ -1148,6 +1191,7 @@ class WebService:
         # -------------------- 数据API（部分需要鉴权）--------------------
         @self.app.route("/api/work/<work_id>")
         def get_work_details(work_id):
+            self.scanner.check_and_scan()
             work_meta = self.data_manager.get_work_meta(work_id)
             if not work_meta:
                 return jsonify({"error": "作业不存在"}), 404
@@ -1155,14 +1199,23 @@ class WebService:
             detail = self.data_manager.get_work_detail(work_id)
             questions = detail.get("questions") if detail else None
 
-            # 延迟处理：首次访问时才抓取正文
+            # 延迟处理：首次访问时才抓取正文，加锁防止并发重复抓取
             if questions is None:
                 if not detail or not detail.get("url"):
                     return jsonify({"error": "该作业暂无内容"}), 404
-                questions = self.scanner.work_processor.process(detail["url"])
-                if questions is None:
-                    return jsonify({"error": "获取作业详情失败"}), 502
-                self.data_manager.save_work_detail(work_id, questions)
+                detail_lock = self.scanner.get_detail_lock(work_id)
+                if not detail_lock.acquire(blocking=False):
+                    return jsonify({"error": "正在获取中，请稍后重试"}), 503
+                try:
+                    detail = self.data_manager.get_work_detail(work_id)
+                    questions = detail.get("questions") if detail else None
+                    if questions is None:
+                        questions = self.scanner.work_processor.process(detail["url"])
+                        if questions is None:
+                            return jsonify({"error": "获取作业详情失败"}), 502
+                        self.data_manager.save_work_detail(work_id, questions)
+                finally:
+                    detail_lock.release()
 
             result = dict(work_meta)
             result["questions"] = questions
@@ -1173,6 +1226,7 @@ class WebService:
 
         @self.app.route("/api/works")
         def get_works():
+            self.scanner.check_and_scan()
             date_param = request.args.get("date", "")
             if not date_param:
                 return jsonify([])
@@ -1186,6 +1240,7 @@ class WebService:
 
         @self.app.route("/api/calendar")
         def get_calendar_data():
+            self.scanner.check_and_scan()
             months_param = request.args.get("months", "")
             months = months_param.split(",") if months_param else []
             data = self.data_manager.get_works_counts_by_months(months)
@@ -1202,12 +1257,6 @@ class WebService:
         @self.app.route("/api/config")
         def get_config():
             return jsonify(self.config_manager.config)
-
-        @self.app.route("/api/config/reload", methods=["POST"])
-        # @self._require_auth
-        def reload_config():
-            self.config_manager.load()
-            return jsonify({"status": "success", "message": "配置已重新加载"})
 
         @self.app.route("/api/status")
         def get_status():
@@ -1229,11 +1278,9 @@ CONFIG_FILE = "/storage/emulated/0/1/program/works/config.json"
 DATABASE_PATH = (
     "/storage/emulated/0/xuehai/5210/databases/com.xh.acldstu/1364978/xh_yunzuoye.db"
 )
-FILE_BASE_DIR = "/storage/emulated/0/xuehai/5210/filebases/com.xh.acldstu/1364978/"
-OUTPUT_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DETAIL_VERSION = 2
-EXPIRE_TEMP_TOKEN = 900
-EXPIRE_VERIFY = 120
+EXPIRE_TEMP_TOKEN = 900000
+EXPIRE_VERIFY = 120000
 
 
 def main():
@@ -1241,8 +1288,8 @@ def main():
     logger.set_action("系统初始化")
 
     config_manager = ConfigManager(CONFIG_FILE, logger)
-    data_manager = DataManager(OUTPUT_BASE_DIR)
-    db_extractor = DatabaseExtractor(DATABASE_PATH, FILE_BASE_DIR, data_manager, logger)
+    data_manager = DataManager(config_manager.get_output_dir())
+    db_extractor = DatabaseExtractor(DATABASE_PATH, data_manager, logger)
     work_processor = WorkFileProcessor(logger, db_extractor)
     scanner = Scanner(
         config_manager, data_manager, db_extractor, work_processor, logger
@@ -1255,17 +1302,9 @@ def main():
 
     atexit.register(data_manager.close)
 
-    scan_thread = threading.Thread(target=scanner.start_scan_loop, daemon=True)
-    scan_thread.start()
-
     print(
-        f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}"
-    )
-    print(
-        f"{Logger.Colors.SUCCESS}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 服务器启动，地址：http://localhost:8001{Logger.Colors.RESET}"
-    )
-    print(
-        f"{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 检查间隔：{config_manager.get_check_interval()}秒{Logger.Colors.RESET}"
+        f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}",
+        f"{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Copyright (c) 2024-2026 Yuning. All Rights Reserved.{Logger.Colors.RESET}",
     )
 
     web_service.run()

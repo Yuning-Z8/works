@@ -844,18 +844,25 @@ ${bodyHtml}
         window.copyAnswer = copyAnswer; // 暴露到全局，供内联 onclick 使用
 
         // ---------- 初始化与事件绑定 ----------
-        async function loadWorkDetails() {
+        const MAX_RETRIES = 30;
+        const RETRY_INTERVAL = 2000;
+
+        async function loadWorkDetails(retryCount = 0) {
             try {
                 const response = await fetch(`/api/work/${workId}`);
+                if (response.status === 503 && retryCount < MAX_RETRIES) {
+                    workContent.innerHTML = `<div class="loading"><div class="loading-spinner"></div><div>作业内容正在获取中，请稍候... (${retryCount + 1}/${MAX_RETRIES})</div></div>`;
+                    await new Promise(r => setTimeout(r, RETRY_INTERVAL));
+                    return loadWorkDetails(retryCount + 1);
+                }
                 if (!response.ok) {
                     throw new Error(`请求失败 (${response.status})`);
                 }
                 const workData = await response.json();
                 if (workData.error) {
-                    workContent.innerHTML = `<div class="loading"><div>${workData.error}</div></div>`;
+                    workContent.innerHTML = `<div class="loading"><div>${workData.error}</div>${retryCount < MAX_RETRIES ? `<button onclick="loadWorkDetails()" style="margin-top:10px;padding:8px 16px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">重试</button>` : ''}</div>`;
                     return;
                 }
-                // 数据规范化
                 workData.is_exam = workData.is_exam || false;
                 workData.start_time = workData.start_time || 0;
                 workData.upto_time = workData.upto_time || 0;
@@ -868,7 +875,7 @@ ${bodyHtml}
                 workContent.innerHTML = `
                     <div class="loading">
                         <div>加载失败：${error.message}</div>
-                        <button onclick="location.reload()" style="margin-top:10px;padding:8px 16px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">重新加载</button>
+                        <button onclick="loadWorkDetails()" style="margin-top:10px;padding:8px 16px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">重新加载</button>
                     </div>`;
             }
         }

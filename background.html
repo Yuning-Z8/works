@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>background · 顶部横条</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #232323;  /* e0e0e0, 232323 */
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(#00000000);
+            box-shadow: 0 0 40px rgba(0,0,0,0.7);
+            filter: blur(40px);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="floatCanvas"></canvas>
+
+    <!-- 顶部半透明模糊横条 (固定定位，不干扰点击) -->
+    <div style="position: fixed; top: 0; left: 0; width: 100%; height: 60px; background: #ffffff60; filter: blur(40px); pointer-events: none; z-index: 100;"></div>
+
+    <script>
+        (function() {
+            // ===== 固定参数 =====
+            const SHAPE_COUNT = 4;                     // 四个图形
+            const FORCE_SCALE = 0.012;                  // 力 → 加速度系数
+            const MAX_SPEED = 4;                        // 最大速率限制（因力变大，适当提高）
+            const MIN_DIST = 0.5;                          // 计算力时的最小距离防除零
+            const SIZE_POOL = [135, 90, 80, 65];            // 尺寸
+
+            // ===== 获取canvas =====
+            const canvas = document.getElementById('floatCanvas');
+            let ctx = canvas.getContext('2d');
+
+            // ===== 全局变量 =====
+            let width, height;
+            let shapes = [];
+            let animationId = null;
+
+            // ===== 辅助函数 =====
+            const rand = (min, max) => Math.random() * (max - min) + min;
+            const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+            // 鲜艳色彩
+            const randomColor = () => {
+                const h = randInt(0, 360);
+                const s = randInt(75, 95);
+                const l = randInt(58, 78);
+                return `hsla(${h}, ${s}%, ${l}%, 0.9)`;
+            };
+
+            // 边界力函数 f(x) = 200 / ((x/10)^2) - 1  => 20000/x^2 - 1
+            const boundaryForce = (dist) => {
+                if (dist <= 0.01) return 20000 / 0.0001 - 1; // 极大斥力
+                return 20000 / (dist * dist) - 1.0;
+            };
+
+            // 图形间力函数 g(x) = ((100/(x/3)) - 1) * (1/2) = 150/x - 0.5
+            const interForce = (dist) => {
+                if (dist <= 0.01) return 150 / 0.01 - 0.5; // 极大值
+                return 150.0 / dist - 0.5;
+            };
+
+            // ===== 生成四个图形 (间距适当增大) =====
+            function generateShapes(w, h) {
+                const newShapes = [];
+                const sizes = [...SIZE_POOL];
+
+                const maxAttempts = 5000;  // 增加尝试次数，因为尺寸大更难放置
+                let attempts = 0;
+                const placed = [];
+
+                while (placed.length < 4 && attempts < maxAttempts) {
+                    const idx = placed.length;
+                    const size = sizes[idx];
+                    const x = rand(size, w - size);
+                    const y = rand(size, h - size);
+
+                    // 检查与已放置图形是否重叠：最小距离为两者半径之和的1.5倍，再加20像素缓冲
+                    let ok = true;
+                    for (let p of placed) {
+                        const dx = p.x - x;
+                        const dy = p.y - y;
+                        const minDist = (p.size + size) * 1 + 20;  // 防止初始重叠过强
+                        if (dx * dx + dy * dy < minDist * minDist) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (ok) {
+                        const shapeType = randInt(0, 3);
+                        let shape;
+                        switch (shapeType) {
+                            case 0: shape = 'circle'; break;
+                            case 1: shape = 'rect'; break;
+                            case 2: shape = 'triangle'; break;
+                            case 3: shape = 'diamond'; break;
+                        }
+                        const color = randomColor();
+                        const rot = rand(0, Math.PI * 2);
+                        const vx = rand(-1, 1);
+                        const vy = rand(-1, 1);
+                        placed.push({ x, y, vx, vy, size, shape, color, rot });
+                    }
+                    attempts++;
+                }
+                return placed;
+            }
+
+            // ===== 自适应画布 =====
+            function resizeCanvas() {
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width;
+                canvas.height = height;
+
+                shapes = generateShapes(width, height);
+
+                if (!animationId) {
+                    animationId = requestAnimationFrame(animate);
+                }
+            }
+
+            // ===== 物理更新 =====
+            function updateShapes() {
+                const n = shapes.length;
+                let forces = shapes.map(() => ({ fx: 0, fy: 0 }));
+
+                // 边界力
+                for (let i = 0; i < n; i++) {
+                    const s = shapes[i];
+                    const rad = s.size;
+
+                    let dLeft = s.x;
+                    let dRight = width - s.x;
+                    let dTop = s.y;
+                    let dBottom = height - s.y;
+
+                    dLeft = Math.max(dLeft, MIN_DIST);
+                    dRight = Math.max(dRight, MIN_DIST);
+                    dTop = Math.max(dTop, MIN_DIST);
+                    dBottom = Math.max(dBottom, MIN_DIST);
+
+                    let fLeft = boundaryForce(dLeft);
+                    let fRight = boundaryForce(dRight);
+                    let fTop = boundaryForce(dTop);
+                    let fBottom = boundaryForce(dBottom);
+
+                    forces[i].fx += fLeft;
+                    forces[i].fx -= fRight;
+                    forces[i].fy += fTop;
+                    forces[i].fy -= fBottom;
+                }
+
+                // 图形间力
+                for (let i = 0; i < n; i++) {
+                    for (let j = i + 1; j < n; j++) {
+                        const a = shapes[i];
+                        const b = shapes[j];
+                        let dx = a.x - b.x;
+                        let dy = a.y - b.y;
+                        let dist = Math.hypot(dx, dy);
+                        if (dist < MIN_DIST) dist = MIN_DIST;
+
+                        let forceMag = interForce(dist);
+                        const dirX = dx / dist;
+                        const dirY = dy / dist;
+
+                        forces[i].fx += forceMag * dirX;
+                        forces[i].fy += forceMag * dirY;
+                        forces[j].fx -= forceMag * dirX;
+                        forces[j].fy -= forceMag * dirY;
+                    }
+                }
+
+                // 应用力并更新速度/位置
+                for (let i = 0; i < n; i++) {
+                    const s = shapes[i];
+                    const ax = forces[i].fx * FORCE_SCALE;
+                    const ay = forces[i].fy * FORCE_SCALE;
+
+                    s.vx += ax;
+                    s.vy += ay;
+
+                    // 最大速度限制 (适当提高)
+                    let sp = Math.hypot(s.vx, s.vy);
+                    if (sp > MAX_SPEED) {
+                        s.vx = (s.vx / sp) * MAX_SPEED;
+                        s.vy = (s.vy / sp) * MAX_SPEED;
+                    }
+
+                    s.x += s.vx;
+                    s.y += s.vy;
+
+                    s.rot += 0.004; // 缓慢自转
+                }
+            }
+
+            // ===== 绘制图形 =====
+            function drawShape(ctx, s) {
+                const { x, y, size, shape, color, rot } = s;
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.fillStyle = color;
+
+                switch (shape) {
+                    case 'circle':
+                        ctx.beginPath();
+                        ctx.arc(0, 0, size, 0, 2 * Math.PI);
+                        ctx.fill();
+                        break;
+                    case 'rect':
+                        {
+                            const w = size * 1.4;
+                            const h = size * 1.4;
+                            ctx.fillRect(-w/2, -h/2, w, h);
+                        }
+                        break;
+                    case 'triangle':
+                        {
+                            ctx.rotate(rot);
+                            const r = size;
+                            const sin60 = 0.866 * r;
+                            const cos60 = 0.5 * r;
+                            ctx.beginPath();
+                            ctx.moveTo(0, -r);
+                            ctx.lineTo(sin60, cos60);
+                            ctx.lineTo(-sin60, cos60);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        break;
+                    case 'diamond':
+                        {
+                            ctx.rotate(rot);
+                            const off = size * 0.9;
+                            ctx.beginPath();
+                            ctx.moveTo(0, -off);
+                            ctx.lineTo(off, 0);
+                            ctx.lineTo(0, off);
+                            ctx.lineTo(-off, 0);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        break;
+                }
+                ctx.restore();
+            }
+
+            function drawScene() {
+                ctx.clearRect(0, 0, width, height);
+                for (let s of shapes) {
+                    drawShape(ctx, s);
+                }
+            }
+
+            function animate() {
+                updateShapes();
+                drawScene();
+                animationId = requestAnimationFrame(animate);
+            }
+
+            // ===== 初始化与事件 =====
+            window.addEventListener('load', resizeCanvas);
+            window.addEventListener('resize', resizeCanvas);
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                        animationId = null;
+                    }
+                } else {
+                    if (!animationId && canvas && canvas.width > 0) {
+                        animationId = requestAnimationFrame(animate);
+                    }
+                }
+            });
+
+            window.addEventListener('beforeunload', () => {
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

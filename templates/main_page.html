@@ -749,11 +749,6 @@
                 </div>
             </div>
             <div class="action-buttons">
-                <button class="reload-config-btn" id="reloadConfigBtn" onclick="reloadConfig()">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.66-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.58.25-1.14.59-1.66.98l-2.49-1c-.22-.08-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.64-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.66.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.58-.25 1.14-.59 1.66-.98l2.49 1c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zm-7.43 2.52c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
-                    </svg>
-                </button>
                 <button class="scan-btn" id="scanBtn" onclick="triggerScan()">
                     <span>立即扫描</span>
                 </button>
@@ -1375,19 +1370,6 @@
     }
 
     function resetScanButton() { const btn = document.getElementById('scanBtn'); btn.disabled = false; btn.innerHTML = '<span>立即扫描</span>'; }
-
-    async function reloadConfig() {
-        pendingAuthAction = 'reloadConfig';
-        const btn = document.getElementById('reloadConfigBtn'); btn.classList.add('rotate');
-        try {
-            const res = await fetchWithAuth('/api/config/reload', { method: 'POST' });
-            const data = await res.json();
-            if (data.status === 'success') { await loadConfig(); await refreshData(); }
-            else alert('重载配置失败');
-        } catch (error) {
-            if (error.message !== '需要授权' && error.message !== '授权失败') alert('重载配置失败');
-        } finally { setTimeout(() => btn.classList.remove('rotate'), 500); }
-    }
 
     function escapeHtml(text) { if (!text) return ''; return text.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
 
