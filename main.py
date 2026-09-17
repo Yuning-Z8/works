@@ -1303,7 +1303,7 @@ def main():
     atexit.register(data_manager.close)
 
     print(
-        f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}",
+        f"{Logger.Colors.BOLD}{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ===== 自动答案提取系统 ====={Logger.Colors.RESET}\n",
         f"{Logger.Colors.INFO}[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Copyright (c) 2024-2026 Yuning. All Rights Reserved.{Logger.Colors.RESET}",
     )
 
